@@ -6,6 +6,11 @@ const aiClient = require('./ai-client');
 const workflow = require('./workflow-engine');
 const cds = require('./cds-engine');
 const providerLearning = require('./provider-learning');
+const llmCds = require('./llm-cds');
+const voicePipeline = require('./voice-pipeline');
+const communications = require('./communications');
+const billing = require('./billing-engine');
+const agentOrchestrator = require('./agent-orchestrator');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1393,6 +1398,586 @@ app.get('/api/dashboard', async (req, res) => {
 });
 
 // ==========================================
+// LLM-AUGMENTED CDS ENDPOINTS
+// ==========================================
+
+app.post('/api/llm-cds/reason', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['patient_id']);
+    if (err) return res.status(400).json({ error: err });
+
+    const patientId = validateId(req.body.patient_id);
+    const encounterId = req.body.encounter_id ? validateId(req.body.encounter_id) : null;
+    if (!patientId) return res.status(400).json({ error: 'Invalid patient_id' });
+
+    const context = await cds.buildPatientContext(patientId, encounterId);
+
+    // Get existing rule-based suggestions
+    let ruleSuggestions = [];
+    if (encounterId) {
+      ruleSuggestions = await cds.evaluatePatientContext(encounterId, patientId, context);
+    }
+
+    // Run augmented reasoning
+    const result = await llmCds.augmentedClinicalReasoning(context, ruleSuggestions);
+    res.json(result);
+  } catch (error) {
+    console.error('LLM CDS reasoning error:', error);
+    res.status(500).json({ error: 'Failed to run clinical reasoning' });
+  }
+});
+
+app.post('/api/llm-cds/differential', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['patient_id']);
+    if (err) return res.status(400).json({ error: err });
+
+    const patientId = validateId(req.body.patient_id);
+    if (!patientId) return res.status(400).json({ error: 'Invalid patient_id' });
+
+    const context = await cds.buildPatientContext(patientId, req.body.encounter_id ? validateId(req.body.encounter_id) : null);
+    context.chiefComplaint = req.body.chief_complaint || '';
+    context.transcript = req.body.transcript || '';
+
+    const result = await llmCds.generateDifferentialDiagnosis(context);
+    res.json(result);
+  } catch (error) {
+    console.error('Differential diagnosis error:', error);
+    res.status(500).json({ error: 'Failed to generate differential' });
+  }
+});
+
+app.post('/api/llm-cds/treatment-plan', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['patient_id', 'diagnosis']);
+    if (err) return res.status(400).json({ error: err });
+
+    const patientId = validateId(req.body.patient_id);
+    if (!patientId) return res.status(400).json({ error: 'Invalid patient_id' });
+
+    const context = await cds.buildPatientContext(patientId, req.body.encounter_id ? validateId(req.body.encounter_id) : null);
+    const result = await llmCds.generateTreatmentPlan(context, req.body.diagnosis);
+    res.json(result);
+  } catch (error) {
+    console.error('Treatment plan error:', error);
+    res.status(500).json({ error: 'Failed to generate treatment plan' });
+  }
+});
+
+// ==========================================
+// VOICE PIPELINE ENDPOINTS
+// ==========================================
+
+app.get('/api/voice/config', (req, res) => {
+  const config = voicePipeline.getASRConfig();
+  res.json(config);
+});
+
+app.post('/api/voice/sessions', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['encounter_id', 'patient_id']);
+    if (err) return res.status(400).json({ error: err });
+
+    const encounterId = validateId(req.body.encounter_id);
+    const patientId = validateId(req.body.patient_id);
+    if (!encounterId || !patientId) return res.status(400).json({ error: 'Invalid IDs' });
+
+    const session = voicePipeline.createSession(encounterId, patientId, {
+      autoExtract: req.body.auto_extract !== false
+    });
+    res.status(201).json({ encounterId, patientId, status: 'active' });
+  } catch (error) {
+    console.error('Voice session error:', error);
+    res.status(500).json({ error: 'Failed to create voice session' });
+  }
+});
+
+app.post('/api/voice/sessions/:encounterId/segment', async (req, res) => {
+  try {
+    const encounterId = validateId(req.params.encounterId);
+    if (!encounterId) return res.status(400).json({ error: 'Invalid encounter ID' });
+
+    const session = voicePipeline.getSession(encounterId);
+    if (!session) return res.status(404).json({ error: 'No active voice session for this encounter' });
+
+    const { text, speaker, confidence, is_final } = req.body;
+    if (!text) return res.status(400).json({ error: 'text is required' });
+
+    const segment = session.addSegment(text, { speaker, confidence, isFinal: is_final });
+    res.json({ segment, extractedData: session.extractedData });
+  } catch (error) {
+    console.error('Voice segment error:', error);
+    res.status(500).json({ error: 'Failed to process voice segment' });
+  }
+});
+
+app.get('/api/voice/sessions/:encounterId', async (req, res) => {
+  try {
+    const encounterId = validateId(req.params.encounterId);
+    const session = voicePipeline.getSession(encounterId);
+    if (!session) return res.status(404).json({ error: 'No active voice session' });
+
+    res.json(session.getSummary());
+  } catch (error) {
+    console.error('Voice session query error:', error);
+    res.status(500).json({ error: 'Failed to get voice session' });
+  }
+});
+
+app.delete('/api/voice/sessions/:encounterId', async (req, res) => {
+  try {
+    const encounterId = validateId(req.params.encounterId);
+    const summary = voicePipeline.endSession(encounterId);
+    if (!summary) return res.status(404).json({ error: 'No active voice session' });
+
+    res.json(summary);
+  } catch (error) {
+    console.error('Voice session end error:', error);
+    res.status(500).json({ error: 'Failed to end voice session' });
+  }
+});
+
+app.post('/api/voice/parse-command', (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ error: 'text is required' });
+
+  const command = voicePipeline.parseVoiceCommand(text);
+  res.json({ command, isCommand: !!command });
+});
+
+app.get('/api/voice/sessions', (req, res) => {
+  res.json(voicePipeline.getActiveSessions());
+});
+
+// ==========================================
+// COMMUNICATIONS ENDPOINTS
+// ==========================================
+
+app.post('/api/communications/sms', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['to', 'body']);
+    if (err) return res.status(400).json({ error: err });
+
+    const result = await communications.sendSMS(
+      sanitizeString(req.body.to, 20),
+      sanitizeString(req.body.body, 1600),
+      {
+        patientId: req.body.patient_id ? validateId(req.body.patient_id) : null,
+        encounterId: req.body.encounter_id ? validateId(req.body.encounter_id) : null,
+        patientName: req.body.patient_name,
+        staffMember: req.body.staff_member
+      }
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('SMS send error:', error);
+    res.status(500).json({ error: 'Failed to send SMS' });
+  }
+});
+
+app.post('/api/communications/email', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['to', 'subject', 'body']);
+    if (err) return res.status(400).json({ error: err });
+
+    const result = await communications.sendEmail(
+      sanitizeString(req.body.to, 200),
+      sanitizeString(req.body.subject, 200),
+      sanitizeString(req.body.body, 10000),
+      {
+        patientId: req.body.patient_id ? validateId(req.body.patient_id) : null,
+        staffMember: req.body.staff_member
+      }
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('Email send error:', error);
+    res.status(500).json({ error: 'Failed to send email' });
+  }
+});
+
+app.post('/api/communications/template', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['template_name', 'variables', 'recipient']);
+    if (err) return res.status(400).json({ error: err });
+
+    const result = await communications.sendTemplatedMessage(
+      req.body.template_name,
+      req.body.variables,
+      req.body.recipient,
+      { patientId: req.body.patient_id ? validateId(req.body.patient_id) : null }
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('Templated message error:', error);
+    res.status(500).json({ error: error.message || 'Failed to send templated message' });
+  }
+});
+
+app.get('/api/communications/templates', async (req, res) => {
+  try {
+    const templates = await communications.getMessageTemplates(req.query.category || null);
+    res.json(templates);
+  } catch (error) {
+    console.error('Templates fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch templates' });
+  }
+});
+
+app.get('/api/communications/log', async (req, res) => {
+  try {
+    if (req.query.patient_id) {
+      const pid = validateId(req.query.patient_id);
+      if (!pid) return res.status(400).json({ error: 'Invalid patient_id' });
+      const log = await communications.getPatientCommunications(pid, { channel: req.query.channel });
+      return res.json(log);
+    }
+    const log = await communications.getRecentCommunications(parseInt(req.query.limit, 10) || 50);
+    res.json(log);
+  } catch (error) {
+    console.error('Communication log error:', error);
+    res.status(500).json({ error: 'Failed to fetch communication log' });
+  }
+});
+
+app.post('/api/communications/calls/inbound', async (req, res) => {
+  try {
+    const result = await communications.logInboundCall(req.body.caller_phone, {
+      patientId: req.body.patient_id ? validateId(req.body.patient_id) : null,
+      callerName: req.body.caller_name,
+      reason: req.body.reason,
+      urgency: req.body.urgency,
+      assignedTo: req.body.assigned_to
+    });
+    res.json(result);
+  } catch (error) {
+    console.error('Inbound call error:', error);
+    res.status(500).json({ error: 'Failed to log inbound call' });
+  }
+});
+
+app.post('/api/communications/calls/triage', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['caller_phone']);
+    if (err) return res.status(400).json({ error: err });
+
+    const result = await communications.triageCall(req.body.call_id, req.body.caller_phone);
+    res.json(result);
+  } catch (error) {
+    console.error('Call triage error:', error);
+    res.status(500).json({ error: 'Failed to triage call' });
+  }
+});
+
+app.get('/api/communications/call-queue', async (req, res) => {
+  try {
+    const queue = await communications.getCallQueue(req.query.status || null);
+    res.json(queue);
+  } catch (error) {
+    console.error('Call queue error:', error);
+    res.status(500).json({ error: 'Failed to fetch call queue' });
+  }
+});
+
+app.post('/api/communications/video-session', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['encounter_id', 'patient_id']);
+    if (err) return res.status(400).json({ error: err });
+
+    const result = await communications.createVideoSession(
+      validateId(req.body.encounter_id),
+      validateId(req.body.patient_id),
+      { providerName: req.body.provider_name }
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('Video session error:', error);
+    res.status(500).json({ error: 'Failed to create video session' });
+  }
+});
+
+app.post('/api/communications/:id/suggest-response', async (req, res) => {
+  try {
+    const commId = validateId(req.params.id);
+    if (!commId) return res.status(400).json({ error: 'Invalid communication ID' });
+
+    const suggestion = await communications.generateSuggestedResponse(commId);
+    res.json({ suggestion });
+  } catch (error) {
+    console.error('Suggest response error:', error);
+    res.status(500).json({ error: 'Failed to generate suggested response' });
+  }
+});
+
+// ==========================================
+// BILLING / REVENUE CYCLE ENDPOINTS
+// ==========================================
+
+app.post('/api/billing/claims/generate', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['encounter_id']);
+    if (err) return res.status(400).json({ error: err });
+
+    const encounterId = validateId(req.body.encounter_id);
+    if (!encounterId) return res.status(400).json({ error: 'Invalid encounter_id' });
+
+    const claim = await billing.generateClaimFromEncounter(encounterId);
+    res.status(201).json(claim);
+  } catch (error) {
+    console.error('Claim generation error:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate claim' });
+  }
+});
+
+app.post('/api/billing/claims/:id/scrub', async (req, res) => {
+  try {
+    const claimId = validateId(req.params.id);
+    if (!claimId) return res.status(400).json({ error: 'Invalid claim ID' });
+
+    const result = await billing.scrubClaim(claimId);
+    res.json(result);
+  } catch (error) {
+    console.error('Claim scrub error:', error);
+    res.status(500).json({ error: error.message || 'Failed to scrub claim' });
+  }
+});
+
+app.post('/api/billing/claims/:id/submit', async (req, res) => {
+  try {
+    const claimId = validateId(req.params.id);
+    if (!claimId) return res.status(400).json({ error: 'Invalid claim ID' });
+
+    const result = await billing.submitClaim(claimId);
+    res.json(result);
+  } catch (error) {
+    console.error('Claim submission error:', error);
+    res.status(500).json({ error: error.message || 'Failed to submit claim' });
+  }
+});
+
+app.get('/api/billing/claims', async (req, res) => {
+  try {
+    const claims = await billing.getClaims({
+      status: req.query.status,
+      patient_id: req.query.patient_id ? validateId(req.query.patient_id) : null,
+      payer_id: req.query.payer_id ? validateId(req.query.payer_id) : null
+    });
+    res.json(claims);
+  } catch (error) {
+    console.error('Claims fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch claims' });
+  }
+});
+
+app.get('/api/billing/claims/:id', async (req, res) => {
+  try {
+    const claimId = validateId(req.params.id);
+    if (!claimId) return res.status(400).json({ error: 'Invalid claim ID' });
+
+    const claim = await billing.getClaimById(claimId);
+    if (!claim) return res.status(404).json({ error: 'Claim not found' });
+
+    res.json(claim);
+  } catch (error) {
+    console.error('Claim fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch claim' });
+  }
+});
+
+app.post('/api/billing/claims/:id/deny', async (req, res) => {
+  try {
+    const claimId = validateId(req.params.id);
+    if (!claimId) return res.status(400).json({ error: 'Invalid claim ID' });
+
+    const err = requireFields(req.body, ['denial_code', 'denial_reason']);
+    if (err) return res.status(400).json({ error: err });
+
+    const result = await billing.recordDenial(claimId, req.body);
+    res.json(result);
+  } catch (error) {
+    console.error('Denial record error:', error);
+    res.status(500).json({ error: error.message || 'Failed to record denial' });
+  }
+});
+
+app.post('/api/billing/eligibility/:patientId', async (req, res) => {
+  try {
+    const patientId = validateId(req.params.patientId);
+    if (!patientId) return res.status(400).json({ error: 'Invalid patient ID' });
+
+    const result = await billing.verifyEligibility(patientId);
+    res.json(result);
+  } catch (error) {
+    console.error('Eligibility check error:', error);
+    res.status(500).json({ error: error.message || 'Failed to verify eligibility' });
+  }
+});
+
+app.post('/api/billing/payments', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['patient_id', 'payment_type', 'amount', 'payment_date']);
+    if (err) return res.status(400).json({ error: err });
+
+    const result = await billing.postPayment({
+      ...req.body,
+      patient_id: validateId(req.body.patient_id),
+      claim_id: req.body.claim_id ? validateId(req.body.claim_id) : null
+    });
+    res.status(201).json(result);
+  } catch (error) {
+    console.error('Payment posting error:', error);
+    res.status(500).json({ error: 'Failed to post payment' });
+  }
+});
+
+app.get('/api/billing/patients/:id/balance', async (req, res) => {
+  try {
+    const patientId = validateId(req.params.id);
+    if (!patientId) return res.status(400).json({ error: 'Invalid patient ID' });
+
+    const balance = await billing.getPatientBalance(patientId);
+    res.json(balance);
+  } catch (error) {
+    console.error('Balance fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch patient balance' });
+  }
+});
+
+app.get('/api/billing/payers', async (req, res) => {
+  try {
+    const payers = await billing.getPayers();
+    res.json(payers);
+  } catch (error) {
+    console.error('Payers fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch payers' });
+  }
+});
+
+app.get('/api/billing/fee-schedule', async (req, res) => {
+  try {
+    const fees = await billing.getFeeSchedule(req.query.category || null);
+    res.json(fees);
+  } catch (error) {
+    console.error('Fee schedule error:', error);
+    res.status(500).json({ error: 'Failed to fetch fee schedule' });
+  }
+});
+
+app.get('/api/billing/analytics', async (req, res) => {
+  try {
+    const analytics = await billing.getRevenueAnalytics(req.query.start_date, req.query.end_date);
+    res.json(analytics);
+  } catch (error) {
+    console.error('Revenue analytics error:', error);
+    res.status(500).json({ error: 'Failed to fetch revenue analytics' });
+  }
+});
+
+// ==========================================
+// AGENT ORCHESTRATION ENDPOINTS
+// ==========================================
+
+app.get('/api/agents/status', async (req, res) => {
+  try {
+    const status = await agentOrchestrator.getAgentStatus();
+    res.json(status);
+  } catch (error) {
+    console.error('Agent status error:', error);
+    res.status(500).json({ error: 'Failed to fetch agent status' });
+  }
+});
+
+app.post('/api/agents/tasks', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['task_type', 'agent']);
+    if (err) return res.status(400).json({ error: err });
+
+    const result = await agentOrchestrator.submitTask(req.body.task_type, req.body.agent, {
+      patientId: req.body.patient_id ? validateId(req.body.patient_id) : null,
+      encounterId: req.body.encounter_id ? validateId(req.body.encounter_id) : null,
+      input: req.body.input || {},
+      priority: req.body.priority
+    });
+    res.status(201).json(result);
+  } catch (error) {
+    console.error('Agent task error:', error);
+    res.status(500).json({ error: error.message || 'Failed to submit agent task' });
+  }
+});
+
+app.get('/api/agents/tasks', async (req, res) => {
+  try {
+    const tasks = await agentOrchestrator.getAgentTasks({
+      agent: req.query.agent,
+      status: req.query.status,
+      taskType: req.query.task_type,
+      patientId: req.query.patient_id ? validateId(req.query.patient_id) : null,
+      encounterId: req.query.encounter_id ? validateId(req.query.encounter_id) : null
+    });
+    res.json(tasks);
+  } catch (error) {
+    console.error('Agent tasks fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch agent tasks' });
+  }
+});
+
+app.post('/api/agents/tasks/:id/approve', async (req, res) => {
+  try {
+    const taskId = validateId(req.params.id);
+    if (!taskId) return res.status(400).json({ error: 'Invalid task ID' });
+
+    const result = await agentOrchestrator.approveTask(taskId, req.body.approved_by || 'Provider');
+    res.json(result);
+  } catch (error) {
+    console.error('Task approval error:', error);
+    res.status(500).json({ error: error.message || 'Failed to approve task' });
+  }
+});
+
+app.post('/api/agents/orchestrate/encounter', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['encounter_id', 'patient_id']);
+    if (err) return res.status(400).json({ error: err });
+
+    const encounterId = validateId(req.body.encounter_id);
+    const patientId = validateId(req.body.patient_id);
+    if (!encounterId || !patientId) return res.status(400).json({ error: 'Invalid IDs' });
+
+    const result = await agentOrchestrator.orchestrateEncounter(encounterId, patientId);
+    res.json(result);
+  } catch (error) {
+    console.error('Encounter orchestration error:', error);
+    res.status(500).json({ error: 'Failed to orchestrate encounter' });
+  }
+});
+
+app.post('/api/agents/orchestrate/billing', async (req, res) => {
+  try {
+    const err = requireFields(req.body, ['encounter_id']);
+    if (err) return res.status(400).json({ error: err });
+
+    const encounterId = validateId(req.body.encounter_id);
+    if (!encounterId) return res.status(400).json({ error: 'Invalid encounter_id' });
+
+    const result = await agentOrchestrator.orchestratePostEncounterBilling(encounterId);
+    res.json(result);
+  } catch (error) {
+    console.error('Billing orchestration error:', error);
+    res.status(500).json({ error: 'Failed to orchestrate billing' });
+  }
+});
+
+app.get('/api/agents/sessions', async (req, res) => {
+  try {
+    const sessions = await agentOrchestrator.getAgentSessions(req.query.status || null);
+    res.json(sessions);
+  } catch (error) {
+    console.error('Agent sessions error:', error);
+    res.status(500).json({ error: 'Failed to fetch agent sessions' });
+  }
+});
+
+// ==========================================
 // SYSTEM ENDPOINTS
 // ==========================================
 
@@ -1403,11 +1988,28 @@ app.get('/api/health', (req, res) => {
     claude_enabled: aiClient.isClaudeEnabled(),
     features: {
       clinical_decision_support: true,
+      llm_augmented_cds: llmCds.isEnabled(),
+      llm_available: llmCds.isLLMAvailable(),
       workflow_management: true,
       provider_learning: true,
       voice_recognition: true,
+      voice_pipeline: voicePipeline.getASRConfig().provider,
       pattern_matching: true,
-      soap_generation: true
+      soap_generation: true,
+      communications: {
+        sms: communications.isTwilioConfigured(),
+        email: communications.isSendgridConfigured(),
+        video: true
+      },
+      billing: true,
+      agent_orchestration: true
+    },
+    modules: {
+      llm_cds: 'active',
+      voice_pipeline: 'active',
+      communications: 'active',
+      billing_engine: 'active',
+      agent_orchestrator: 'active'
     },
     timestamp: new Date().toISOString()
   });
@@ -1417,13 +2019,22 @@ app.get('/api/ai/status', (req, res) => {
   res.json({
     mode: aiClient.getMode(),
     claude_enabled: aiClient.isClaudeEnabled(),
+    llm_cds_enabled: llmCds.isEnabled(),
+    llm_available: llmCds.isLLMAvailable(),
+    asr_provider: voicePipeline.getASRConfig().provider,
     features: {
       pattern_matching: true,
       claude_api: aiClient.isClaudeEnabled(),
       real_time_extraction: true,
       soap_generation: true,
       clinical_decision_support: true,
-      provider_learning: true
+      llm_augmented_cds: llmCds.isEnabled(),
+      differential_diagnosis: true,
+      treatment_planning: true,
+      provider_learning: true,
+      voice_pipeline: true,
+      voice_commands: true,
+      agent_orchestration: true
     }
   });
 });
@@ -1444,6 +2055,28 @@ async function startServer() {
   // Wait for database to be ready
   await db.ready;
 
+  // Initialize new module schemas
+  try {
+    await communications.initCommunicationsSchema();
+    console.log('Communications schema initialized');
+  } catch (err) {
+    console.error('Communications schema init failed (non-fatal):', err.message);
+  }
+
+  try {
+    await billing.initBillingSchema();
+    console.log('Billing schema initialized');
+  } catch (err) {
+    console.error('Billing schema init failed (non-fatal):', err.message);
+  }
+
+  try {
+    await agentOrchestrator.initAgentSchema();
+    console.log('Agent orchestrator schema initialized');
+  } catch (err) {
+    console.error('Agent schema init failed (non-fatal):', err.message);
+  }
+
   // Run preference decay on startup
   try {
     await providerLearning.decayPreferences();
@@ -1451,26 +2084,35 @@ async function startServer() {
     console.error('Preference decay on startup failed (non-fatal):', err.message);
   }
 
+  const asrConfig = voicePipeline.getASRConfig();
+
   const server = app.listen(PORT, () => {
     console.log(`
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  MJR-EHR Intelligent Clinical Agent System
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  MJR-EHR Intelligent Clinical Agent System v2.0
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   Server running on: http://localhost:${PORT}
   AI Mode: ${aiClient.getMode()}
   Claude API: ${aiClient.isClaudeEnabled() ? 'Enabled' : 'Disabled (using pattern matching)'}
 
-  Modules Loaded:
-    Database:          Connected (SQLite3 WAL mode)
-    CDS Engine:        25 clinical rules active
-    Workflow Engine:    9-state machine ready
-    Provider Learning:  Preference tracking enabled
-    Speech Recognition: Ready (browser-based)
+  Core Modules:
+    Database:            Connected (SQLite3 WAL mode)
+    CDS Engine:          25 clinical rules active
+    Workflow Engine:     9-state machine ready
+    Provider Learning:   Preference tracking enabled
+    Speech Recognition:  Ready (browser-based)
 
-  API Endpoints: ~35 routes active
-  Ready for interactive demos!
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  New Modules (v2.0):
+    LLM-Augmented CDS:  ${llmCds.isEnabled() ? 'Enabled' : 'Disabled'} (LLM: ${llmCds.isLLMAvailable() ? 'Connected' : 'Mock mode'})
+    Voice Pipeline:      ${asrConfig.provider} (${asrConfig.available ? 'Ready' : 'Not configured'})
+    Communications:      SMS: ${communications.isTwilioConfigured() ? 'Twilio' : 'Queued'} | Email: ${communications.isSendgridConfigured() ? 'SendGrid' : 'Queued'}
+    Billing/RCM:         Active (${process.env.CLEARINGHOUSE || 'no clearinghouse'})
+    Agent Orchestrator:  5 agents registered
+
+  API Endpoints: ~85 routes active
+  Ready for production workflows!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     `);
   });
 
