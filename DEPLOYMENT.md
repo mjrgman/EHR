@@ -34,18 +34,9 @@ cd agentic-ehr
 # Install dependencies
 npm install
 
-# Initialize encryption key (generate once, store securely)
-PHI_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-echo "PHI_ENCRYPTION_KEY=$PHI_ENCRYPTION_KEY" > .env.local
-
-# Also generate PHI pepper for searchable hashing
-PHI_PEPPER=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-echo "PHI_PEPPER=$PHI_PEPPER" >> .env.local
-
-# Set NODE_ENV
-echo "NODE_ENV=development" >> .env.local
-echo "PORT=3000" >> .env.local
-echo "DATABASE_PATH=./data/agentic-ehr.db" >> .env.local
+# Run the interactive setup wizard — generates .env with secure secrets,
+# creates data/ directory, and optionally creates the first admin user
+node scripts/setup.js
 ```
 
 ### Running Development Server
@@ -138,87 +129,47 @@ PORT=3000
 DATABASE_PATH=/data/agentic-ehr.db
 LOG_DIR=/data/logs
 
-# Security - GENERATE NEW VALUES
-PHI_ENCRYPTION_KEY=<64-char-hex-from-setup-script>
-PHI_PEPPER=<64-char-hex-from-setup-script>
-SESSION_SECRET=<32-char-random-string>
+# Security — GENERATE NEW VALUES (use node scripts/setup.js or commands below)
+JWT_SECRET=<64-char-hex>
+PHI_ENCRYPTION_KEY=<64-char-hex>
 
-# API Keys
-CLAUDE_API_KEY=<your-claude-api-key>
+# Provider display name (shown in notes and CDS suggestions)
+PROVIDER_NAME=Dr. Your Name
 
-# TLS/Certificates
-SSL_CERT_PATH=/etc/nginx/certs/server.crt
-SSL_KEY_PATH=/etc/nginx/certs/server.key
+# Claude API — set AI_MODE=api to enable AI-powered extraction
+ANTHROPIC_API_KEY=<your-anthropic-api-key>
+AI_MODE=mock
 ```
 
 Generate secure values:
 
 ```bash
-# Generate encryption keys
+# Or use the setup wizard which generates both automatically:
+node scripts/setup.js
+
+# Or generate manually:
+node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(64).toString('hex'))"
 node -e "console.log('PHI_ENCRYPTION_KEY=' + require('crypto').randomBytes(32).toString('hex'))"
-node -e "console.log('PHI_PEPPER=' + require('crypto').randomBytes(32).toString('hex'))"
-node -e "console.log('SESSION_SECRET=' + require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Create `nginx-default.conf`:
-
-```nginx
-# Redirect HTTP to HTTPS
-server {
-    listen 80;
-    server_name _;
-    return 301 https://$host$request_uri;
-}
-
-# HTTPS server
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
-
-    # TLS Configuration
-    ssl_certificate /etc/nginx/certs/server.crt;
-    ssl_certificate_key /etc/nginx/certs/server.key;
-    ssl_protocols TLSv1.3 TLSv1.2;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "DENY" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-
-    # Proxy to agentic-ehr backend
-    location / {
-        proxy_pass http://agentic-ehr:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
+The nginx configuration is already in `nginx/nginx.conf`. No additional nginx config file is needed.
 
 #### 3. Generate TLS Certificates
 
 ```bash
 # Self-signed (development/testing only)
+# nginx.conf expects cert.pem and key.pem in ./certs/
 mkdir -p certs
 openssl req -x509 -newkey rsa:4096 -nodes \
-  -out certs/server.crt -keyout certs/server.key -days 365 \
+  -out certs/cert.pem -keyout certs/key.pem -days 365 \
   -subj "/CN=your-domain.com"
 
 # Production: Use Let's Encrypt with Certbot
 sudo apt install certbot python3-certbot-nginx
 sudo certbot certonly --standalone -d your-domain.com
 # Copy certs to ./certs/
-sudo cp /etc/letsencrypt/live/your-domain.com/fullchain.pem certs/server.crt
-sudo cp /etc/letsencrypt/live/your-domain.com/privkey.pem certs/server.key
+sudo cp /etc/letsencrypt/live/your-domain.com/fullchain.pem certs/cert.pem
+sudo cp /etc/letsencrypt/live/your-domain.com/privkey.pem certs/key.pem
 sudo chown $USER:$USER certs/*
 ```
 
@@ -229,7 +180,8 @@ sudo chown $USER:$USER certs/*
 cp -r <repo>/server ./
 cp -r <repo>/dist ./
 cp -r <repo>/package*.json ./
-cp Dockerfile docker-compose.yml nginx.conf nginx-default.conf ./
+cp Dockerfile docker-compose.yml ./
+cp -r nginx ./
 
 # Build and start services
 docker-compose up -d
