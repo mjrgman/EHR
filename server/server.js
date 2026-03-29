@@ -10,6 +10,7 @@ const providerLearning = require('./provider-learning');
 const audit = require('./audit-logger');
 const logger = require('./utils/logger');
 const { validate, schemas } = require('./utils/validate');
+const auth = require('./security/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1663,10 +1664,7 @@ app.post('/api/auth/refresh', async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired refresh token' });
     }
 
-    // Get the user to sign a new access token
-    const user = await db.dbGet('SELECT * FROM users WHERE id = ? AND is_active = 1', [result.refreshToken ? undefined : undefined]);
     // We need the user_id from the validation step — get it from the new token's DB entry
-    const auth = require('./security/auth');
     const tokenInfo = await refreshTokens.validate(result.refreshToken);
     if (!tokenInfo) {
       return res.status(401).json({ error: 'Token rotation failed' });
@@ -1744,6 +1742,9 @@ app.get('*', (req, res) => {
 async function startServer() {
   // Wait for database to be ready
   await db.ready;
+
+  // Initialize auth (creates users table, seeds default admin if empty)
+  await auth.init(db);
 
   // Initialize refresh token module
   await refreshTokens.init(db);
