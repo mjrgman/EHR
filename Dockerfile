@@ -39,8 +39,9 @@ FROM node:22-alpine
 WORKDIR /app
 
 # Create non-root user for security
-RUN addgroup -g 1000 ehr && \
-    adduser -u 1000 -G ehr -s /sbin/nologin -D ehr
+# Avoid UID/GID 1000 because it is already present in some node:alpine images.
+RUN addgroup -g 1001 ehr && \
+    adduser -u 1001 -G ehr -s /sbin/nologin -D ehr
 
 # Copy package files from builder
 COPY package*.json ./
@@ -67,7 +68,7 @@ EXPOSE 3000
 
 # Health check endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})" || exit 1
+  CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})" || exit 1
 
 # Set environment variables with defaults
 ENV NODE_ENV=production \
