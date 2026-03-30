@@ -33,7 +33,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.13.0",
-    "sqlite3": "^5.1.6"
+    "sqlite3": "^6.0.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",
@@ -45,6 +45,11 @@
     "vite": "^5.4.21"
   },
   "overrides": {
-    "picomatch": ">=2.3.2"
+    "brace-expansion": ">=1.1.13",
+    "minimatch": ">=3.1.4",
+    "path-to-regexp": ">=0.1.13",
+    "picomatch": ">=2.3.2",
+    "rollup": ">=4.59.0",
+    "esbuild": ">=0.25.0"
   }
 }
