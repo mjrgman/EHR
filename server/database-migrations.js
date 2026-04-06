@@ -41,7 +41,8 @@ async function runMigrations(db) {
     await migrateSuggestionTypes(db);
     await createAppointmentsTable(db);
     await createChargesTable(db);
-    await createFhirIngestTables(db);
+    // Note: FHIR ingestion tables (fhir_ingest_jobs/items, fhir_id_map) are defined
+    // in database.js base schema and created there on every startup — no migration needed.
 
     console.log('[MIGRATIONS] All migrations completed successfully');
     return { success: true, message: 'All migrations completed' };
@@ -358,15 +359,12 @@ async function createIndexes(db) {
     'CREATE INDEX IF NOT EXISTS idx_login_success ON login_attempts(success)'
   ];
 
-  for (const indexSql of indexes) {
-    try {
-      await dbRun(db, indexSql);
-    } catch (err) {
-      if (!err.message.includes('already exists')) {
-        throw err;
-      }
-    }
-  }
+  // All indexes are independent — create in parallel to minimize startup latency.
+  await Promise.all(indexes.map(indexSql =>
+    dbRun(db, indexSql).catch(err => {
+      if (!err.message.includes('already exists')) throw err;
+    })
+  ));
 }
 
 // ==========================================
@@ -379,37 +377,44 @@ async function createIndexes(db) {
  * Idempotent — safe to run multiple times.
  */
 async function migrateCdsRules(db) {
-  // Step 1: Rebuild clinical_rules with updated CHECK constraint to include prescribing_advisory.
-  // SQLite requires full table recreation to modify a CHECK constraint.
-  await dbRun(db, 'PRAGMA foreign_keys=OFF');
-  await dbRun(db, 'BEGIN TRANSACTION');
-  try {
-    await dbRun(db, `
-      CREATE TABLE IF NOT EXISTS clinical_rules_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rule_name TEXT NOT NULL UNIQUE,
-        rule_type TEXT NOT NULL CHECK(rule_type IN (
-          'vital_alert','lab_alert','drug_interaction','drug_allergy',
-          'dose_check','differential','screening','follow_up','prescribing_advisory'
-        )),
-        trigger_condition TEXT NOT NULL,
-        suggested_actions TEXT NOT NULL,
-        priority INTEGER DEFAULT 50,
-        enabled BOOLEAN DEFAULT 1,
-        evidence_source TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    await dbRun(db, `INSERT OR IGNORE INTO clinical_rules_new SELECT * FROM clinical_rules`);
-    await dbRun(db, `DROP TABLE clinical_rules`);
-    await dbRun(db, `ALTER TABLE clinical_rules_new RENAME TO clinical_rules`);
-    await dbRun(db, 'COMMIT');
-    console.log('[MIGRATIONS] clinical_rules table constraint updated');
-  } catch (err) {
-    await dbRun(db, 'ROLLBACK');
-    throw err;
+  // Step 1: Rebuild clinical_rules to add 'prescribing_advisory' to the rule_type CHECK constraint.
+  // SQLite requires full table recreation to modify CHECK constraints.
+  // Guard: skip if constraint already includes the new type (idempotency on repeated starts).
+  const existing = await dbGetCompat(db,
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='clinical_rules'");
+  const needsConstraintUpgrade = !existing?.sql?.includes('prescribing_advisory');
+
+  if (needsConstraintUpgrade) {
+    await dbRun(db, 'PRAGMA foreign_keys=OFF');
+    await dbRun(db, 'BEGIN TRANSACTION');
+    try {
+      await dbRun(db, `
+        CREATE TABLE IF NOT EXISTS clinical_rules_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          rule_name TEXT NOT NULL UNIQUE,
+          rule_type TEXT NOT NULL CHECK(rule_type IN (
+            'vital_alert','lab_alert','drug_interaction','drug_allergy',
+            'dose_check','differential','screening','follow_up','prescribing_advisory'
+          )),
+          trigger_condition TEXT NOT NULL,
+          suggested_actions TEXT NOT NULL,
+          priority INTEGER DEFAULT 50,
+          enabled BOOLEAN DEFAULT 1,
+          evidence_source TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await dbRun(db, `INSERT OR IGNORE INTO clinical_rules_new SELECT * FROM clinical_rules`);
+      await dbRun(db, `DROP TABLE clinical_rules`);
+      await dbRun(db, `ALTER TABLE clinical_rules_new RENAME TO clinical_rules`);
+      await dbRun(db, 'COMMIT');
+      console.log('[MIGRATIONS] clinical_rules table constraint updated');
+    } catch (err) {
+      await dbRun(db, 'ROLLBACK');
+      throw err;
+    }
+    await dbRun(db, 'PRAGMA foreign_keys=ON');
   }
-  await dbRun(db, 'PRAGMA foreign_keys=ON');
 
   // Step 2: Update hypoxia rule from spo2 < 92 to < 95 (clinical standard for alert threshold).
   await dbRun(db,
@@ -431,7 +436,9 @@ async function migrateCdsRules(db) {
     ]
   );
 
-  // Step 2b: Ensure hypoxia rule title includes "Hypoxia" regardless of prior state.
+  // Step 2b: Normalize hypoxia title so the word "Hypoxia" appears in the string.
+  // The scenario test runner matches CDS alerts by substring — "Low Oxygen Saturation"
+  // alone won't match an expected_cds entry of "Hypoxia". WHERE clause makes this idempotent.
   await dbRun(db,
     `UPDATE clinical_rules SET suggested_actions = json_set(suggested_actions, '$.title', 'Hypoxia - Low Oxygen Saturation (SpO2 < 95%)')
      WHERE rule_name = 'hypoxia'
