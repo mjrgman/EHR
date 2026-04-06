@@ -232,6 +232,38 @@ async function runAllTests() {
     assert(problems.some(p => p.code === 'N18.3'), 'Should find CKD stage 3a (N18.3)');
   });
 
+  await test('Extract medication by brand-name alias (Lasix -> Furosemide)', async () => {
+    const transcript = "Continue Lasix 40mg daily for volume overload.";
+    const medications = aiClient.extractMedications(transcript);
+
+    const furo = medications.find(m => m.name.toLowerCase() === 'lasix');
+    assert(furo, 'Lasix should be extracted via alias');
+    assertEqual(furo.dose, '40mg', 'Lasix dose');
+    assertEqual(furo.frequency, 'daily', 'Lasix frequency');
+  });
+
+  await test('Medication deduplication: same drug mentioned twice yields one entry', async () => {
+    const transcript = "Patient takes Metformin 1000mg twice daily. Continue Metformin 1000mg twice daily.";
+    const medications = aiClient.extractMedications(transcript);
+
+    const metforminEntries = medications.filter(m => m.name.toLowerCase() === 'metformin');
+    assertEqual(metforminEntries.length, 1, 'Metformin should appear exactly once after dedup');
+  });
+
+  await test('Temperature extraction works with Unicode degree symbol (Â°)', async () => {
+    const transcript = "Vitals show temp is 101.2Â°F today.";
+    const vitals = aiClient.extractVitals(transcript);
+
+    assertEqual(vitals.temperature, 101.2, 'Temperature should parse through Unicode normalization');
+  });
+
+  await test('SpO2 extraction handles colloquial "sat\u2019s at 93"', async () => {
+    const transcript = "Her sat\u2019s at 93 percent on room air.";
+    const vitals = aiClient.extractVitals(transcript);
+
+    assertEqual(vitals.spo2, 93, 'SpO2 should parse colloquial sat phrasing');
+  });
+
   await test('Extract lab orders from transcript', async () => {
     const transcript = "Order A1C, basic metabolic panel, and urine microalbumin for 6 weeks from now.";
     const labs = aiClient.extractLabOrders(transcript);
@@ -1067,6 +1099,987 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
     assert(charges[0].encounter_date, 'Should JOIN encounter date');
     assert(charges[0].first_name, 'Should JOIN patient name');
   });
+
+  // ==========================================
+  // PHASE 13: FHIR R4 TRANSLATION LAYER
+  // ==========================================
+
+  console.log('\n--- PHASE 13: FHIR R4 TRANSLATION LAYER ---\n');
+
+  const { toFhirPatient } = require('../server/fhir/mappers/patient');
+  const { toFhirEncounter } = require('../server/fhir/mappers/encounter');
+  const { toFhirCondition } = require('../server/fhir/mappers/condition');
+  const { toFhirVitalObservations } = require('../server/fhir/mappers/observation-vitals');
+  const { toFhirLabObservation } = require('../server/fhir/mappers/observation-labs');
+  const { toFhirAllergyIntolerance } = require('../server/fhir/mappers/allergy-intolerance');
+  const { toFhirMedicationRequest } = require('../server/fhir/mappers/medication-request');
+  const { toFhirAppointment } = require('../server/fhir/mappers/appointment');
+  const { searchBundle, operationOutcome } = require('../server/fhir/utils/fhir-response');
+  const { buildCapabilityStatement } = require('../server/fhir/capability-statement');
+
+  await test('FHIR: CapabilityStatement has correct fhirVersion and resourceType', async () => {
+    const cap = buildCapabilityStatement('http://localhost:3000');
+    assertEqual(cap.resourceType, 'CapabilityStatement');
+    assertEqual(cap.fhirVersion, '4.0.1');
+    assert(cap.rest[0].resource.length >= 8, 'Should declare at least 8 resource types');
+    const types = cap.rest[0].resource.map(r => r.type);
+    assert(types.includes('Patient'), 'Should include Patient');
+    assert(types.includes('Observation'), 'Should include Observation');
+    assert(types.includes('Condition'), 'Should include Condition');
+  });
+
+  await test('FHIR: Patient mapper produces valid Patient resource for Sarah', async () => {
+    const sarah = await db.getPatientById(sarahId);
+    const fhir = toFhirPatient(sarah);
+    assertEqual(fhir.resourceType, 'Patient');
+    assertEqual(fhir.id, String(sarahId));
+    assertEqual(fhir.gender, 'female');
+    assertEqual(fhir.birthDate, '1963-01-15');
+    assertEqual(fhir.name[0].family, 'Mitchell');
+    assert(fhir.name[0].given.includes('Sarah'), 'Given name should include Sarah');
+    assert(fhir.identifier.length >= 1, 'Should have at least MRN identifier');
+    assertEqual(fhir.identifier[0].value, '2018-04792');
+  });
+
+  await test('FHIR: Patient mapper includes insurance identifier', async () => {
+    const sarah = await db.getPatientById(sarahId);
+    const fhir = toFhirPatient(sarah);
+    const insuranceId = fhir.identifier.find(i => i.use === 'secondary');
+    assert(insuranceId, 'Should have secondary (insurance) identifier');
+    assertEqual(insuranceId.value, 'GX-334521');
+  });
+
+  await test('FHIR: Condition mapper produces valid Condition resources', async () => {
+    const problems = await db.getPatientProblems(sarahId);
+    assert(problems.length >= 4, 'Sarah should have at least 4 conditions');
+    const fhirConditions = problems.map(toFhirCondition);
+    fhirConditions.forEach(c => {
+      assertEqual(c.resourceType, 'Condition');
+      assert(c.clinicalStatus, 'Should have clinicalStatus');
+      assert(c.code, 'Should have code');
+      assert(c.subject, 'Should have subject reference');
+    });
+    const htn = fhirConditions.find(c => c.code.coding && c.code.coding[0].code === 'I10');
+    assert(htn, 'Should include HTN (I10)');
+    assertEqual(htn.code.coding[0].system, 'http://hl7.org/fhir/sid/icd-10-cm');
+  });
+
+  await test('FHIR: Observation vitals mapper produces LOINC-coded observations', async () => {
+    const vitals = await db.getPatientVitals(sarahId);
+    assert(vitals.length >= 1, 'Sarah should have at least 1 vitals record');
+    const fhirObs = toFhirVitalObservations(vitals[0]);
+    assert(fhirObs.length >= 1, 'Should produce at least 1 Observation from vitals');
+    const bp = fhirObs.find(o => o.code.coding[0].code === '85354-9');
+    assert(bp, 'Should include blood pressure panel (LOINC 85354-9)');
+    assert(bp.component.length >= 1, 'BP should have components');
+    fhirObs.forEach(o => {
+      assertEqual(o.resourceType, 'Observation');
+      assertEqual(o.category[0].coding[0].code, 'vital-signs');
+    });
+  });
+
+  await test('FHIR: Observation lab mapper produces laboratory observations', async () => {
+    const labs = await db.getPatientLabs(sarahId);
+    assert(labs.length >= 1, 'Sarah should have at least 1 lab result');
+    const fhirLabs = labs.map(toFhirLabObservation);
+    fhirLabs.forEach(l => {
+      assertEqual(l.resourceType, 'Observation');
+      assertEqual(l.category[0].coding[0].code, 'laboratory');
+    });
+    const a1c = fhirLabs.find(l => l.code.coding && l.code.coding[0].code === '4548-4');
+    assert(a1c, 'Should include HbA1c (LOINC 4548-4)');
+  });
+
+  await test('FHIR: AllergyIntolerance mapper for Sarah (Penicillin)', async () => {
+    const allergies = await db.getPatientAllergies(sarahId);
+    const fhirAllergies = allergies.map(toFhirAllergyIntolerance);
+    assert(fhirAllergies.length >= 1, 'Sarah should have at least 1 allergy');
+    const pcn = fhirAllergies.find(a => a.code.text === 'Penicillin');
+    assert(pcn, 'Should have Penicillin allergy');
+    assertEqual(pcn.resourceType, 'AllergyIntolerance');
+    assertEqual(pcn.reaction[0].severity, 'moderate');
+  });
+
+  await test('FHIR: Encounter mapper produces valid Encounter resource', async () => {
+    const encounter = await db.getEncounterById(encounterId);
+    const fhir = toFhirEncounter(encounter);
+    assertEqual(fhir.resourceType, 'Encounter');
+    assertEqual(fhir.id, String(encounterId));
+    assert(fhir.subject, 'Should have subject reference');
+    assert(fhir.class, 'Should have class');
+    assert(['in-progress', 'finished', 'unknown'].includes(fhir.status), 'Should have valid status');
+  });
+
+  await test('FHIR: searchBundle wraps resources correctly', async () => {
+    const patients = await db.getAllPatients();
+    const fhirPatients = patients.map(toFhirPatient);
+    const bundle = searchBundle('Patient', fhirPatients, 'http://localhost:3000/fhir/R4/Patient');
+    assertEqual(bundle.resourceType, 'Bundle');
+    assertEqual(bundle.type, 'searchset');
+    assertEqual(bundle.total, patients.length);
+    assert(bundle.entry.length === patients.length, 'Entry count should match total');
+    bundle.entry.forEach(e => {
+      assertEqual(e.resource.resourceType, 'Patient');
+      assertEqual(e.search.mode, 'match');
+    });
+  });
+
+  await test('FHIR: OperationOutcome factory produces valid error', async () => {
+    const oo = operationOutcome('error', 'not-found', 'Patient/999 not found');
+    assertEqual(oo.resourceType, 'OperationOutcome');
+    assertEqual(oo.issue[0].severity, 'error');
+    assertEqual(oo.issue[0].code, 'not-found');
+  });
+
+  const { toFhirPractitioner } = require('../server/fhir/mappers/practitioner');
+
+  await test('FHIR: Practitioner mapper — minimum profile (no NPI, no telecom)', async () => {
+    // Represents a non-clinical role (MA) — NPI not required, telecom optional
+    const minUser = {
+      id: 901,
+      username: 'test.ma',
+      role: 'ma',
+      full_name: 'Maria Santos',
+      npi_number: null,
+      email: null,
+      phone: null,
+      is_active: 1,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z'
+    };
+    const fhir = toFhirPractitioner(minUser);
+    assertEqual(fhir.resourceType, 'Practitioner');
+    assertEqual(fhir.id, '901');
+    assertEqual(fhir.active, true);
+    // Username identifier always present
+    assert(fhir.identifier.some(i => i.value === 'test.ma'), 'Should have username identifier');
+    // NPI not present for non-clinical role
+    assert(!fhir.identifier.some(i => i.system === 'http://hl7.org/fhir/sid/us-npi'), 'Should not have NPI identifier');
+    // Telecom omitted when empty
+    assert(!fhir.telecom, 'Telecom should be absent when not populated');
+    // Name parsed correctly
+    assertEqual(fhir.name[0].family, 'Santos');
+    assert(fhir.name[0].given.includes('Maria'), 'Given name should include Maria');
+  });
+
+  await test('FHIR: Practitioner mapper — full profile (physician with NPI, email, phone)', async () => {
+    const fullUser = {
+      id: 902,
+      username: 'dr.renner',
+      role: 'physician',
+      full_name: 'Michael J. Renner',
+      npi_number: '1234567890',
+      email: 'dr.renner@clinic.com',
+      phone: '478-555-0100',
+      is_active: 1,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-04-05T00:00:00.000Z'
+    };
+    const fhir = toFhirPractitioner(fullUser);
+    assertEqual(fhir.resourceType, 'Practitioner');
+    assertEqual(fhir.id, '902');
+    // NPI present
+    const npi = fhir.identifier.find(i => i.system === 'http://hl7.org/fhir/sid/us-npi');
+    assert(npi, 'Should have NPI identifier');
+    assertEqual(npi.value, '1234567890');
+    // Name: multi-part — family should be last token
+    assertEqual(fhir.name[0].family, 'Renner');
+    assert(fhir.name[0].given.includes('Michael'), 'Given name should include Michael');
+    // Telecom
+    const email = fhir.telecom.find(t => t.system === 'email');
+    const phone = fhir.telecom.find(t => t.system === 'phone');
+    assert(email, 'Should have email telecom');
+    assertEqual(email.value, 'dr.renner@clinic.com');
+    assert(phone, 'Should have phone telecom');
+    // Qualification maps physician role to SNOMED
+    assert(fhir.qualification, 'Should have qualification');
+    assertEqual(fhir.qualification[0].code.coding[0].code, '112247003');
+  });
+
+  await test('FHIR: Practitioner mapper — single-token name falls back to text', async () => {
+    const user = {
+      id: 903,
+      username: 'admin.user',
+      role: 'admin',
+      full_name: 'Administrator',
+      npi_number: null,
+      email: 'admin@clinic.com',
+      phone: null,
+      is_active: 1,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z'
+    };
+    const fhir = toFhirPractitioner(user);
+    assert(fhir.name[0].text === 'Administrator', 'Single-token name should use text field');
+    assert(!fhir.name[0].family, 'Single-token name should not set family');
+  });
+
+  // ==========================================
+  // PHASE 14: FHIR R4 HTTP CONTRACT TESTS
+  // ==========================================
+
+  console.log('\n--- PHASE 14: FHIR R4 HTTP CONTRACT TESTS ---\n');
+
+  // Spin up a minimal Express instance with the FHIR router on a random port.
+  // NODE_ENV is not 'production' during tests, so auth.requireAuth passes through.
+  const http = require('http');
+  const expressHttp = require('express');
+  const fhirRouter = require('../server/fhir/router');
+  const fhirTestApp = expressHttp();
+  fhirTestApp.use(expressHttp.json());
+  fhirTestApp.use('/fhir/R4', fhirRouter);
+
+  const fhirTestServer = await new Promise((resolve) => {
+    const srv = fhirTestApp.listen(0, '127.0.0.1', () => resolve(srv));
+  });
+  const fhirPort = fhirTestServer.address().port;
+
+  function fhirGet(path) {
+    return new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${fhirPort}${path}`, (res) => {
+        let raw = '';
+        res.on('data', chunk => { raw += chunk; });
+        res.on('end', () => {
+          try {
+            resolve({ status: res.statusCode, body: JSON.parse(raw), headers: res.headers });
+          } catch {
+            resolve({ status: res.statusCode, body: raw, headers: res.headers });
+          }
+        });
+      }).on('error', reject);
+    });
+  }
+
+  await test('FHIR HTTP: GET /metadata returns 200 CapabilityStatement', async () => {
+    const { status, body } = await fhirGet('/fhir/R4/metadata');
+    assertEqual(status, 200);
+    assertEqual(body.resourceType, 'CapabilityStatement');
+    assertEqual(body.fhirVersion, '4.0.1');
+    assert(body.rest[0].resource.length >= 8, 'Should declare at least 8 resource types');
+  });
+
+  await test('FHIR HTTP: GET /Patient/:id returns 200 Patient resource', async () => {
+    const { status, body } = await fhirGet(`/fhir/R4/Patient/${sarahId}`);
+    assertEqual(status, 200);
+    assertEqual(body.resourceType, 'Patient');
+    assertEqual(body.id, String(sarahId));
+  });
+
+  await test('FHIR HTTP: GET /Patient/:id with unknown ID returns 404 OperationOutcome', async () => {
+    const { status, body } = await fhirGet('/fhir/R4/Patient/99999');
+    assertEqual(status, 404);
+    assertEqual(body.resourceType, 'OperationOutcome');
+    assertEqual(body.issue[0].code, 'not-found');
+  });
+
+  await test('FHIR HTTP: GET /Encounter without patient param returns 400 OperationOutcome', async () => {
+    const { status, body } = await fhirGet('/fhir/R4/Encounter');
+    assertEqual(status, 400);
+    assertEqual(body.resourceType, 'OperationOutcome');
+    assertEqual(body.issue[0].code, 'invalid');
+  });
+
+  await test('FHIR HTTP: GET /Patient returns 200 searchset Bundle', async () => {
+    const { status, body } = await fhirGet('/fhir/R4/Patient');
+    assertEqual(status, 200);
+    assertEqual(body.resourceType, 'Bundle');
+    assertEqual(body.type, 'searchset');
+    assert(body.total >= 2, 'Should have at least 2 patients');
+  });
+
+  await test('FHIR HTTP: GET /Patient?identifier=MRN returns matching patient', async () => {
+    const { status, body } = await fhirGet('/fhir/R4/Patient?identifier=2018-04792');
+    assertEqual(status, 200);
+    assertEqual(body.type, 'searchset');
+    assertEqual(body.total, 1);
+    assertEqual(body.entry[0].resource.id, String(sarahId));
+  });
+
+  await test('FHIR HTTP: GET /Observation without patient param returns 400 OperationOutcome', async () => {
+    const { status, body } = await fhirGet('/fhir/R4/Observation');
+    assertEqual(status, 400);
+    assertEqual(body.resourceType, 'OperationOutcome');
+  });
+
+  await test('FHIR HTTP: unsupported resource type returns 404 OperationOutcome', async () => {
+    const { status, body } = await fhirGet('/fhir/R4/DiagnosticReport');
+    assertEqual(status, 404);
+    assertEqual(body.resourceType, 'OperationOutcome');
+  });
+
+  await test('FHIR HTTP: response includes X-FHIR-Version header', async () => {
+    const { status, headers } = await fhirGet('/fhir/R4/metadata');
+    assertEqual(status, 200);
+    assertEqual(headers['x-fhir-version'], '4.0.1');
+  });
+
+  // Tear down Phase 14 test server
+  await new Promise(resolve => fhirTestServer.close(resolve));
+
+  // ==========================================
+  // PHASE 15: FHIR INBOUND INGESTION TESTS
+  // ==========================================
+
+  console.log('\n--- PHASE 15: FHIR INBOUND INGESTION ---\n');
+
+  const { ingestBundle, lookupIdMap } = require('../server/fhir/inbound/bundle-ingest');
+  const { fromFhirPatient } = require('../server/fhir/inbound/patient');
+  const { fromFhirEncounter } = require('../server/fhir/inbound/encounter');
+
+  // ── Translator unit tests ──
+
+  await test('Inbound: fromFhirPatient translates minimal Patient correctly', async () => {
+    const fhirPt = {
+      resourceType: 'Patient',
+      id: 'ext-pt-001',
+      name: [{ family: 'Chen', given: ['Linda', 'M'] }],
+      birthDate: '1980-06-15',
+      gender: 'female',
+    };
+    const { data, errors } = fromFhirPatient(fhirPt);
+    assert(errors.length === 0, `Should have no errors, got: ${errors.map(e=>e.message).join('; ')}`);
+    assertEqual(data.first_name, 'Linda');
+    assertEqual(data.middle_name, 'M');
+    assertEqual(data.last_name, 'Chen');
+    assertEqual(data.dob, '1980-06-15');
+    assertEqual(data.sex, 'F');
+  });
+
+  await test('Inbound: fromFhirPatient fails when name is missing', async () => {
+    const { data, errors } = fromFhirPatient({
+      resourceType: 'Patient',
+      birthDate: '1980-06-15',
+    });
+    assert(errors.length > 0, 'Should have validation errors');
+    assert(!data, 'data should be null on validation failure');
+  });
+
+  await test('Inbound: fromFhirPatient fails when birthDate is missing', async () => {
+    const { errors } = fromFhirPatient({
+      resourceType: 'Patient',
+      name: [{ family: 'Smith', given: ['John'] }],
+    });
+    assert(errors.some(e => e.field === 'birthDate'), 'Should report missing birthDate');
+  });
+
+  await test('Inbound: fromFhirEncounter translates Encounter with resolved patient', async () => {
+    const fhirEnc = {
+      resourceType: 'Encounter',
+      id: 'ext-enc-001',
+      status: 'finished',
+      class: { code: 'AMB' },
+      subject: { reference: 'Patient/99' },
+      period: { start: '2026-04-05T09:00:00Z' },
+      reasonCode: [{ text: 'Annual wellness visit' }],
+    };
+    const { data, errors } = fromFhirEncounter(fhirEnc, 99);
+    assert(errors.length === 0, `Should have no errors`);
+    assertEqual(data.patient_id, 99);
+    assertEqual(data.encounter_date, '2026-04-05');
+    assertEqual(data.encounter_type, 'office_visit');
+    assertEqual(data.chief_complaint, 'Annual wellness visit');
+    assertEqual(data.status, 'completed');
+  });
+
+  await test('Inbound: fromFhirEncounter fails without resolved patient', async () => {
+    const { data, errors } = fromFhirEncounter({
+      resourceType: 'Encounter',
+      status: 'in-progress',
+    }, null);
+    assert(errors.length > 0, 'Should fail without patient ID');
+    assert(!data, 'data should be null');
+  });
+
+  // ── Bundle ingestion tests ──
+
+  await test('Inbound: ingest valid Patient bundle creates internal patient', async () => {
+    const bundle = {
+      resourceType: 'Bundle',
+      type: 'transaction',
+      entry: [{
+        resource: {
+          resourceType: 'Patient',
+          id: 'ext-ingest-pt-001',
+          name: [{ family: 'Torres', given: ['Carmen'] }],
+          birthDate: '1975-03-22',
+          gender: 'female',
+          telecom: [{ system: 'phone', value: '478-555-0200' }],
+        }
+      }]
+    };
+    const result = await ingestBundle(bundle, { submittedBy: 'test-runner' });
+    assert(result.jobId, 'Should return a jobId');
+    assertEqual(result.successCount, 1);
+    assertEqual(result.failureCount, 0);
+    assertEqual(result.results[0].status, 'success');
+    assert(result.results[0].internalId, 'Should have an internal ID');
+
+    // Verify fhir_id_map entry was created
+    const mapped = await lookupIdMap('Patient', 'ext-ingest-pt-001');
+    assert(mapped, 'Should have fhir_id_map entry');
+    assertEqual(mapped.internal_id, result.results[0].internalId);
+    assertEqual(mapped.internal_table, 'patients');
+  });
+
+  await test('Inbound: ingest Patient+Encounter bundle links encounter to patient', async () => {
+    const bundle = {
+      resourceType: 'Bundle',
+      type: 'transaction',
+      entry: [
+        {
+          resource: {
+            resourceType: 'Patient',
+            id: 'ext-ingest-pt-002',
+            name: [{ family: 'Nguyen', given: ['David'] }],
+            birthDate: '1968-11-30',
+            gender: 'male',
+          }
+        },
+        {
+          resource: {
+            resourceType: 'Encounter',
+            id: 'ext-ingest-enc-001',
+            status: 'finished',
+            class: { code: 'AMB' },
+            subject: { reference: 'Patient/ext-ingest-pt-002' },
+            period: { start: '2026-04-05' },
+            reasonCode: [{ text: 'Follow-up visit' }],
+          }
+        }
+      ]
+    };
+    const result = await ingestBundle(bundle, { submittedBy: 'test-runner' });
+    assertEqual(result.successCount, 2);
+    assertEqual(result.failureCount, 0);
+
+    const encResult = result.results.find(r => r.resourceType === 'Encounter');
+    assert(encResult, 'Should have Encounter result');
+    assertEqual(encResult.status, 'success');
+
+    // Verify encounter is linked to patient in DB
+    const enc = await db.getEncounterById(encResult.internalId);
+    const ptMapped = await lookupIdMap('Patient', 'ext-ingest-pt-002');
+    assertEqual(enc.patient_id, ptMapped.internal_id);
+  });
+
+  await test('Inbound: replaying same bundle is idempotent (no duplicates)', async () => {
+    const bundle = {
+      resourceType: 'Bundle',
+      type: 'transaction',
+      entry: [{
+        resource: {
+          resourceType: 'Patient',
+          id: 'ext-ingest-pt-001',  // same ID as first ingest test
+          name: [{ family: 'Torres', given: ['Carmen'] }],
+          birthDate: '1975-03-22',
+          gender: 'female',
+        }
+      }]
+    };
+    const result = await ingestBundle(bundle, { submittedBy: 'test-runner' });
+    assertEqual(result.successCount, 0);
+    assertEqual(result.skippedCount, 1);
+    assertEqual(result.results[0].status, 'skipped');
+    assertEqual(result.results[0].note, 'idempotent-replay');
+
+    // Patient count should not have grown
+    const allPts = await db.getAllPatients();
+    const torresCount = allPts.filter(p => p.last_name === 'Torres').length;
+    assertEqual(torresCount, 1, 'Should not create duplicate patient on replay');
+  });
+
+  await test('Inbound: bundle with validation failure produces OperationOutcome diagnostics', async () => {
+    const bundle = {
+      resourceType: 'Bundle',
+      type: 'batch',
+      entry: [{
+        resource: {
+          resourceType: 'Patient',
+          id: 'ext-bad-pt-001',
+          // Missing name and birthDate — should fail validation
+        }
+      }]
+    };
+    const result = await ingestBundle(bundle, { submittedBy: 'test-runner' });
+    assertEqual(result.failureCount, 1);
+    assertEqual(result.successCount, 0);
+    assertEqual(result.results[0].status, 'failed');
+    assert(result.results[0].error, 'Should report error code');
+
+    // Verify failure is persisted in fhir_ingest_items
+    const job = await db.dbGet('SELECT * FROM fhir_ingest_jobs WHERE job_id = ?', [result.jobId]);
+    assertEqual(job.failure_count, 1);
+    assertEqual(job.status, 'failed');
+    const items = await db.dbAll('SELECT * FROM fhir_ingest_items WHERE job_id = ?', [result.jobId]);
+    assertEqual(items[0].status, 'failed');
+    assert(items[0].error_message, 'Should persist error message');
+  });
+
+  await test('Inbound: unsupported resource type is skipped cleanly', async () => {
+    const bundle = {
+      resourceType: 'Bundle',
+      type: 'batch',
+      entry: [{
+        resource: {
+          resourceType: 'Observation',
+          id: 'ext-obs-001',
+          status: 'final',
+        }
+      }]
+    };
+    const result = await ingestBundle(bundle, { submittedBy: 'test-runner' });
+    assertEqual(result.skippedCount, 1);
+    assertEqual(result.failureCount, 0);
+    assertEqual(result.results[0].status, 'skipped');
+  });
+
+  await test('Inbound: non-Bundle body returns invalid-bundle error', async () => {
+    let threw = false;
+    try {
+      await ingestBundle({ resourceType: 'Patient', id: '1' });
+    } catch (err) {
+      threw = true;
+      assertEqual(err.code, 'invalid-bundle');
+    }
+    assert(threw, 'Should throw for non-Bundle input');
+  });
+
+  // ==========================================
+  // PHASE 16: SMART-on-FHIR FOUNDATION TESTS
+  // ==========================================
+
+  console.log('\n--- PHASE 16: SMART-on-FHIR FOUNDATION ---\n');
+
+  const { buildSmartConfiguration, ROLE_SCOPES, RESOURCE_SCOPE_MAP, scopeSatisfies } = require('../server/fhir/smart/smart-config');
+  const { extractResourceType, scopeKey } = require('../server/fhir/smart/scope-check');
+
+  // ── Discovery document tests ──
+
+  await test('SMART: discovery document has required fields', async () => {
+    const config = buildSmartConfiguration('https://ehr.example.com');
+    assert(config.issuer, 'Should have issuer');
+    assert(config.authorization_endpoint, 'Should have authorization_endpoint');
+    assert(config.token_endpoint, 'Should have token_endpoint');
+    assert(Array.isArray(config.capabilities), 'Should have capabilities array');
+    assert(Array.isArray(config.scopes_supported), 'Should have scopes_supported');
+    assert(Array.isArray(config.grant_types_supported), 'Should have grant_types_supported');
+  });
+
+  await test('SMART: discovery URLs use provided baseUrl', async () => {
+    const config = buildSmartConfiguration('https://ehr.example.com');
+    assert(config.token_endpoint.startsWith('https://ehr.example.com'), 'token_endpoint should use baseUrl');
+    assert(config.authorization_endpoint.startsWith('https://ehr.example.com'), 'authorize_endpoint should use baseUrl');
+  });
+
+  await test('SMART: discovery declares SMART-on-FHIR capability', async () => {
+    const config = buildSmartConfiguration('https://ehr.example.com');
+    assert(config.capabilities.includes('launch-ehr'), 'Should support launch-ehr');
+    assert(config.capabilities.includes('permission-patient'), 'Should support permission-patient');
+    assert(config.capabilities.includes('permission-system'), 'Should support permission-system');
+  });
+
+  // ── Scope satisfaction tests ──
+
+  await test('SMART: scopeSatisfies — exact match', async () => {
+    assert(scopeSatisfies(['patient/Patient.read'], 'patient/Patient.read'), 'Exact match should satisfy');
+  });
+
+  await test('SMART: scopeSatisfies — wildcard patient/*.read satisfies specific', async () => {
+    assert(scopeSatisfies(['patient/*.read'], 'patient/Patient.read'), 'Wildcard should satisfy specific');
+    assert(scopeSatisfies(['patient/*.read'], 'patient/Encounter.read'), 'Wildcard should satisfy Encounter');
+    assert(!scopeSatisfies(['patient/*.read'], 'user/Practitioner.read'), 'patient wildcard should not satisfy user scope');
+  });
+
+  await test('SMART: scopeSatisfies — system/*.write wildcard', async () => {
+    assert(scopeSatisfies(['system/*.write'], 'system/Bundle.write'), 'system wildcard should satisfy Bundle.write');
+    assert(!scopeSatisfies(['patient/*.read'], 'system/Bundle.write'), 'patient read should not satisfy system write');
+  });
+
+  await test('SMART: scopeSatisfies — empty scopes always deny', async () => {
+    assert(!scopeSatisfies([], 'patient/Patient.read'), 'Empty scopes should deny');
+    assert(!scopeSatisfies(null, 'patient/Patient.read'), 'Null scopes should deny');
+  });
+
+  await test('SMART: scopeSatisfies — null required scope (public endpoint) always allows', async () => {
+    assert(scopeSatisfies([], null), 'Public endpoint should allow regardless of scopes');
+    assert(scopeSatisfies(null, null), 'Public endpoint should allow with null granted');
+  });
+
+  // ── ROLE_SCOPES coverage tests ──
+
+  await test('SMART: physician role has full patient + user + system scopes', async () => {
+    const scopes = ROLE_SCOPES['physician'];
+    assert(scopeSatisfies(scopes, 'patient/Patient.read'), 'physician: patient read');
+    assert(scopeSatisfies(scopes, 'patient/Encounter.read'), 'physician: encounter read');
+    assert(scopeSatisfies(scopes, 'user/Practitioner.read'), 'physician: practitioner read');
+    assert(scopeSatisfies(scopes, 'system/Bundle.write'), 'physician: bundle write');
+  });
+
+  await test('SMART: front_desk role is limited to Patient + Appointment only', async () => {
+    const scopes = ROLE_SCOPES['front_desk'];
+    assert(scopeSatisfies(scopes, 'patient/Patient.read'), 'front_desk: patient read allowed');
+    assert(scopeSatisfies(scopes, 'patient/Appointment.read'), 'front_desk: appointment read allowed');
+    assert(!scopeSatisfies(scopes, 'patient/Condition.read'), 'front_desk: condition read denied');
+    assert(!scopeSatisfies(scopes, 'system/Bundle.write'), 'front_desk: bundle write denied');
+  });
+
+  // ── RESOURCE_SCOPE_MAP tests ──
+
+  await test('SMART: resource scope map covers all FHIR router resource types', async () => {
+    const expectedTypes = ['Patient', 'Encounter', 'Condition', 'Observation',
+      'AllergyIntolerance', 'MedicationRequest', 'Appointment', 'Practitioner'];
+    expectedTypes.forEach(type => {
+      const key = `${type}.GET`;
+      assert(key in RESOURCE_SCOPE_MAP, `Should have scope entry for ${key}`);
+    });
+    // Bundle POST
+    assert('Bundle.POST' in RESOURCE_SCOPE_MAP, 'Should have Bundle.POST scope entry');
+    // metadata is public
+    assert(RESOURCE_SCOPE_MAP['metadata.GET'] === null, 'metadata should require no scope');
+  });
+
+  // ── extractResourceType helper tests ──
+
+  await test('SMART: extractResourceType parses FHIR paths correctly', async () => {
+    assertEqual(extractResourceType('/Patient/1'), 'Patient');
+    assertEqual(extractResourceType('/Patient'), 'Patient');
+    assertEqual(extractResourceType('/metadata'), 'metadata');
+    assertEqual(extractResourceType('/Bundle'), 'Bundle');
+    assertEqual(extractResourceType('/AllergyIntolerance'), 'AllergyIntolerance');
+  });
+
+  // ── Token endpoint HTTP tests ──
+
+  console.log('  Setting up SMART token HTTP tests...');
+
+  // Create a test user for SMART token tests
+  const smartTestUser = {
+    username: 'smart.test.physician',
+    password: 'SmartTest$2026',
+    fullName: 'SMART Test Physician',
+    role: 'physician',
+    email: 'smart.test@clinic.com',
+  };
+
+  try {
+    await db.dbRun(
+      `INSERT OR IGNORE INTO users (username, password_hash, full_name, role, email, npi_number)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        smartTestUser.username,
+        // bcrypt hash of SmartTest$2026 — pre-computed to avoid test latency
+        '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj5sRApOb5VG',
+        smartTestUser.fullName,
+        smartTestUser.role,
+        smartTestUser.email,
+        '9876543210',
+      ]
+    );
+  } catch (_) { /* user may already exist from a prior run */ }
+
+  // Spin up a minimal HTTP server for SMART token endpoint tests
+  const smartApp = require('express')();
+  smartApp.use(require('express').json());
+  smartApp.use(require('express').urlencoded({ extended: false }));
+  const { tokenHandler: th, introspectHandler: ih } = require('../server/fhir/smart/token');
+  smartApp.post('/smart/token', th);
+  smartApp.post('/smart/introspect', ih);
+
+  const smartServer = await new Promise(resolve => {
+    const s = smartApp.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const smartPort = smartServer.address().port;
+
+  function smartPost(path, body) {
+    return new Promise((resolve, reject) => {
+      const payload = JSON.stringify(body);
+      const req = http.request(
+        { hostname: '127.0.0.1', port: smartPort, path, method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+        res => {
+          let raw = '';
+          res.on('data', c => { raw += c; });
+          res.on('end', () => {
+            try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
+            catch { resolve({ status: res.statusCode, body: raw }); }
+          });
+        }
+      );
+      req.on('error', reject);
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  await test('SMART: token endpoint rejects unsupported grant_type', async () => {
+    const { status, body } = await smartPost('/smart/token', { grant_type: 'implicit' });
+    assertEqual(status, 400);
+    assertEqual(body.error, 'unsupported_grant_type');
+  });
+
+  await test('SMART: token endpoint rejects bad credentials', async () => {
+    const { status, body } = await smartPost('/smart/token', {
+      grant_type: 'client_credentials',
+      username: 'nobody',
+      password: 'wrong',
+    });
+    assertEqual(status, 401);
+    assertEqual(body.error, 'invalid_client');
+  });
+
+  await test('SMART: introspect returns active:false for invalid token', async () => {
+    const { status, body } = await smartPost('/smart/introspect', { token: 'not.a.real.token' });
+    assertEqual(status, 200);
+    assertEqual(body.active, false);
+  });
+
+  // ── CapabilityStatement SMART security extension ──
+
+  await test('SMART: CapabilityStatement includes SMART security extension', async () => {
+    const cap = buildCapabilityStatement('http://localhost:3000');
+    const security = cap.rest[0].security;
+    assert(security, 'Should have security block');
+    assert(security.cors === true, 'Should declare CORS support');
+    const oauthExt = security.extension?.find(e =>
+      e.url === 'http://fhir-registry.smarthealthit.org/StructureDefinition/oauth-uris'
+    );
+    assert(oauthExt, 'Should have oauth-uris extension');
+    const tokenExt = oauthExt.extension?.find(e => e.url === 'token');
+    assert(tokenExt, 'Should have token URI in oauth-uris');
+  });
+
+  await test('SMART: CapabilityStatement includes Bundle create interaction', async () => {
+    const cap = buildCapabilityStatement('http://localhost:3000');
+    const bundleEntry = cap.rest[0].resource.find(r => r.type === 'Bundle');
+    assert(bundleEntry, 'Should have Bundle resource entry');
+    assert(bundleEntry.interaction.some(i => i.code === 'create'), 'Bundle should declare create interaction');
+  });
+
+  await new Promise(resolve => smartServer.close(resolve));
+
+  // ==========================================
+  // PHASE 17: PAGING, _INCLUDE, AND METRICS
+  // ==========================================
+
+  console.log('\n--- PHASE 17: PAGING, _INCLUDE, AND METRICS ---\n');
+
+  const {
+    parsePagingParams,
+    buildPageUrl,
+    parseIncludeParam
+  } = require('../server/fhir/utils/search-params');
+  const { getSnapshot, resetMetrics, fhirMetricsMiddleware } = require('../server/fhir/utils/fhir-metrics');
+
+  // ── parsePagingParams unit tests ──
+
+  await test('Paging: parsePagingParams returns defaults when no query params', async () => {
+    const { count, offset } = parsePagingParams({});
+    assertEqual(count, 20, '_count default');
+    assertEqual(offset, 0, '_offset default');
+  });
+
+  await test('Paging: parsePagingParams parses custom _count and _offset', async () => {
+    const { count, offset } = parsePagingParams({ _count: '5', _offset: '10' });
+    assertEqual(count, 5, '_count=5');
+    assertEqual(offset, 10, '_offset=10');
+  });
+
+  await test('Paging: parsePagingParams clamps _count to 1-100 range', async () => {
+    const { count: tooSmall } = parsePagingParams({ _count: '0' });
+    assertEqual(tooSmall, 1, '_count=0 clamped to 1');
+    const { count: tooBig } = parsePagingParams({ _count: '999' });
+    assertEqual(tooBig, 100, '_count=999 clamped to 100');
+  });
+
+  await test('Paging: parsePagingParams clamps negative _offset to 0', async () => {
+    const { offset } = parsePagingParams({ _offset: '-5' });
+    assertEqual(offset, 0, '_offset=-5 clamped to 0');
+  });
+
+  // ── parseIncludeParam unit tests ──
+
+  await test('_include: parseIncludeParam parses single string', async () => {
+    const result = parseIncludeParam('Encounter:patient');
+    assert(result instanceof Set, 'Should return a Set');
+    assert(result.has('Encounter:patient'), 'Should contain the include value');
+  });
+
+  await test('_include: parseIncludeParam handles undefined (empty Set)', async () => {
+    const result = parseIncludeParam(undefined);
+    assert(result instanceof Set, 'Should return a Set');
+    assertEqual(result.size, 0, 'Should be empty');
+  });
+
+  await test('_include: parseIncludeParam handles array of values', async () => {
+    const result = parseIncludeParam(['Encounter:patient', 'Observation:patient']);
+    assert(result.has('Encounter:patient'), 'Should contain Encounter:patient');
+    assert(result.has('Observation:patient'), 'Should contain Observation:patient');
+  });
+
+  // ── searchBundle paging options ──
+
+  await test('searchBundle: includes next/previous links when provided', async () => {
+    const { searchBundle: sb } = require('../server/fhir/utils/fhir-response');
+    const resources = [{ id: '1', resourceType: 'Patient' }];
+    const bundle = sb('Patient', resources, 'http://host/fhir/R4/Patient?_offset=1', {
+      total: 5,
+      nextUrl: 'http://host/fhir/R4/Patient?_offset=2',
+      prevUrl: 'http://host/fhir/R4/Patient?_offset=0'
+    });
+    assertEqual(bundle.total, 5, 'total reflects full result count');
+    const relations = bundle.link.map(l => l.relation);
+    assert(relations.includes('next'), 'Should include next link');
+    assert(relations.includes('previous'), 'Should include previous link');
+    assert(relations.includes('self'), 'Should include self link');
+  });
+
+  await test('searchBundle: includeResources added with search.mode=include', async () => {
+    const { searchBundle: sb } = require('../server/fhir/utils/fhir-response');
+    const matches = [{ id: '10', resourceType: 'Encounter' }];
+    const includes = [{ id: '1', resourceType: 'Patient' }];
+    const bundle = sb('Encounter', matches, 'http://host/test', { includeResources: includes });
+    assertEqual(bundle.entry.length, 2, 'Should have 2 entries (1 match + 1 include)');
+    const matchEntry   = bundle.entry.find(e => e.search.mode === 'match');
+    const includeEntry = bundle.entry.find(e => e.search.mode === 'include');
+    assert(matchEntry,   'Should have a match entry');
+    assert(includeEntry, 'Should have an include entry');
+    assertEqual(includeEntry.resource.id, '1', 'Include entry should be the Patient');
+    assert(includeEntry.fullUrl.startsWith('Patient/'), 'Include fullUrl should use resource resourceType');
+  });
+
+  // ── Metrics unit tests ──
+
+  await test('Metrics: getSnapshot returns empty array after resetMetrics', async () => {
+    resetMetrics();
+    const snap = getSnapshot();
+    assertEqual(snap.length, 0, 'No entries after reset');
+  });
+
+  await test('Metrics: fhirMetricsMiddleware records a hit on res.finish', async () => {
+    resetMetrics();
+    // Simulate a request/response cycle using event emitter
+    const EventEmitter = require('events');
+    const mockRes = Object.assign(new EventEmitter(), { statusCode: 200 });
+    const mockReq = { method: 'GET', path: '/Patient' };
+    fhirMetricsMiddleware(mockReq, mockRes, () => {});
+    mockRes.emit('finish');
+    const snap = getSnapshot();
+    assertEqual(snap.length, 1, 'Should record one route');
+    assertEqual(snap[0].resourceType, 'Patient');
+    assertEqual(snap[0].method, 'GET');
+    assertEqual(snap[0].count, 1);
+    assertEqual(snap[0].errorCount, 0);
+  });
+
+  await test('Metrics: fhirMetricsMiddleware counts 4xx responses as errors', async () => {
+    resetMetrics();
+    const EventEmitter = require('events');
+    const mockRes = Object.assign(new EventEmitter(), { statusCode: 404 });
+    fhirMetricsMiddleware({ method: 'GET', path: '/Patient/99999' }, mockRes, () => {});
+    mockRes.emit('finish');
+    const snap = getSnapshot();
+    assertEqual(snap[0].errorCount, 1, 'errorCount should be 1 for 404');
+  });
+
+  // ── HTTP integration tests for paging and _include ──
+
+  const expressP17 = require('express');
+  const fhirRouterP17 = require('../server/fhir/router');
+  const p17App = expressP17();
+  p17App.use(expressP17.json());
+  p17App.use('/fhir/R4', fhirRouterP17);
+
+  const p17Server = await new Promise((resolve) => {
+    const srv = p17App.listen(0, '127.0.0.1', () => resolve(srv));
+  });
+  const p17Port = p17Server.address().port;
+
+  function p17Get(path) {
+    return new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${p17Port}${path}`, (res) => {
+        let raw = '';
+        res.on('data', chunk => { raw += chunk; });
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
+          catch { resolve({ status: res.statusCode, body: raw }); }
+        });
+      }).on('error', reject);
+    });
+  }
+
+  await test('Paging HTTP: GET /Patient?_count=1 returns 1 entry with total>=2 and next link', async () => {
+    const { status, body } = await p17Get('/fhir/R4/Patient?_count=1');
+    assertEqual(status, 200);
+    assertEqual(body.type, 'searchset');
+    assert(body.total >= 2, `total should reflect full count (got ${body.total})`);
+    assertEqual(body.entry.length, 1, 'page should have 1 entry');
+    const nextLink = body.link.find(l => l.relation === 'next');
+    assert(nextLink, 'Should have a next link');
+  });
+
+  await test('Paging HTTP: GET /Patient?_count=1&_offset=1 has previous link, no previous when at start', async () => {
+    const { status, body } = await p17Get('/fhir/R4/Patient?_count=1&_offset=1');
+    assertEqual(status, 200);
+    const prevLink = body.link.find(l => l.relation === 'previous');
+    assert(prevLink, 'Should have a previous link when offset > 0');
+  });
+
+  await test('Paging HTTP: GET /Patient?_offset=9999 returns empty entries, total unchanged', async () => {
+    const allRes = await p17Get('/fhir/R4/Patient');
+    const totalPatients = allRes.body.total;
+    const { status, body } = await p17Get('/fhir/R4/Patient?_offset=9999');
+    assertEqual(status, 200);
+    assertEqual(body.entry.length, 0, 'Page beyond end should have 0 entries');
+    assertEqual(body.total, totalPatients, 'total should still reflect full count');
+    const nextLink = body.link.find(l => l.relation === 'next');
+    assert(!nextLink, 'Should have no next link at the end');
+  });
+
+  await test('_include HTTP: GET /Encounter?patient=ID&_include=Encounter:patient has include entry', async () => {
+    const { status, body } = await p17Get(
+      `/fhir/R4/Encounter?patient=${sarahId}&_include=Encounter:patient`
+    );
+    assertEqual(status, 200);
+    assertEqual(body.type, 'searchset');
+    const includeEntry = body.entry?.find(e => e.search?.mode === 'include');
+    assert(includeEntry, 'Should have an include entry for the patient');
+    assertEqual(includeEntry.resource.resourceType, 'Patient', 'Include entry should be a Patient');
+  });
+
+  await test('_include HTTP: unsupported _include value is silently ignored', async () => {
+    const { status, body } = await p17Get(
+      `/fhir/R4/Encounter?patient=${sarahId}&_include=Patient:bogus`
+    );
+    assertEqual(status, 200, 'Should not error on unsupported _include');
+    const includeEntry = body.entry?.find(e => e.search?.mode === 'include');
+    assert(!includeEntry, 'No include entry for unsupported _include directive');
+  });
+
+  await test('Metrics HTTP: GET /$stats returns 200 FHIR Parameters resource', async () => {
+    const { status, body } = await p17Get('/fhir/R4/$stats');
+    assertEqual(status, 200);
+    assertEqual(body.resourceType, 'Parameters');
+    assert(Array.isArray(body.parameter), 'Should have parameter array');
+    const serverStart = body.parameter.find(p => p.name === 'serverStartTime');
+    assert(serverStart, 'Should include serverStartTime parameter');
+  });
+
+  await test('Metrics HTTP: $stats routeMetric entries reflect prior requests', async () => {
+    // Multiple requests already made to this server — $stats should show them
+    const { body } = await p17Get('/fhir/R4/$stats');
+    const routeMetrics = body.parameter.filter(p => p.name === 'routeMetric');
+    assert(routeMetrics.length > 0, 'Should have at least one routeMetric entry');
+    // Verify structure of a routeMetric part
+    const anyMetric = routeMetrics[0];
+    const partNames = anyMetric.part.map(p => p.name);
+    assert(partNames.includes('method'),       'routeMetric should have method');
+    assert(partNames.includes('resourceType'), 'routeMetric should have resourceType');
+    assert(partNames.includes('count'),        'routeMetric should have count');
+    assert(partNames.includes('errorCount'),   'routeMetric should have errorCount');
+    assert(partNames.includes('avgLatencyMs'), 'routeMetric should have avgLatencyMs');
+  });
+
+  await new Promise(resolve => p17Server.close(resolve));
 
   // ==========================================
   // RESULTS

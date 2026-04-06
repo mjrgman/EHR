@@ -402,10 +402,62 @@ function initializeDatabase() {
 
       db.run(`CREATE INDEX IF NOT EXISTS idx_charges_encounter ON charges(encounter_id)`);
       db.run(`CREATE INDEX IF NOT EXISTS idx_charges_patient ON charges(patient_id)`);
-      db.run(`CREATE INDEX IF NOT EXISTS idx_charges_status ON charges(status)`, (err) => {
+      db.run(`CREATE INDEX IF NOT EXISTS idx_charges_status ON charges(status)`);
+
+      // ==========================================
+      // FHIR INGESTION STAGING TABLES
+      // ==========================================
+
+      db.run(`CREATE TABLE IF NOT EXISTS fhir_ingest_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT UNIQUE NOT NULL,
+        source TEXT,
+        status TEXT NOT NULL CHECK(status IN (
+          'pending','processing','completed','failed','partial'
+        )) DEFAULT 'pending',
+        bundle_type TEXT,
+        resource_count INTEGER DEFAULT 0,
+        success_count INTEGER DEFAULT 0,
+        failure_count INTEGER DEFAULT 0,
+        submitted_by TEXT,
+        submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME
+      )`);
+
+      db.run(`CREATE TABLE IF NOT EXISTS fhir_ingest_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        entry_index INTEGER NOT NULL,
+        resource_type TEXT NOT NULL,
+        external_id TEXT,
+        status TEXT NOT NULL CHECK(status IN (
+          'pending','success','failed','skipped'
+        )) DEFAULT 'pending',
+        internal_id INTEGER,
+        error_code TEXT,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (job_id) REFERENCES fhir_ingest_jobs(job_id)
+      )`);
+
+      db.run(`CREATE TABLE IF NOT EXISTS fhir_id_map (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        resource_type TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        internal_id INTEGER NOT NULL,
+        internal_table TEXT NOT NULL,
+        first_seen_job TEXT NOT NULL,
+        last_updated_job TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(resource_type, external_id)
+      )`);
+
+      db.run(`CREATE INDEX IF NOT EXISTS idx_fhir_id_map_lookup ON fhir_id_map(resource_type, external_id)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_fhir_ingest_items_job ON fhir_ingest_items(job_id)`, (err) => {
         if (err) reject(err);
         else {
-          console.log('Database schema initialized (19 tables + indexes)');
+          console.log('Database schema initialized (22 tables + indexes)');
           resolve();
         }
       });
@@ -528,7 +580,7 @@ function loadClinicalRules() {
           rule_type: 'vital_alert',
           trigger_condition: JSON.stringify({ field: 'spo2', operator: '<', value: 95 }),
           suggested_actions: JSON.stringify({
-            title: 'Low Oxygen Saturation - SpO2 Below 95%',
+            title: 'Hypoxia - Low Oxygen Saturation (SpO2 < 95%)',
             description: 'Oxygen saturation below normal threshold (< 95%). Evaluate for respiratory compromise. Apply supplemental O2 if SpO2 < 92%.',
             category: 'urgent',
             actions: [

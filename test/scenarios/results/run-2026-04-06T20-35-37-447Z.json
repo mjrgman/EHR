@@ -1,0 +1,2679 @@
+{
+  "timestamp": "2026-04-06T20:35:37.447Z",
+  "results": [
+    {
+      "id": "DM-UNCONTROLLED-001",
+      "name": "Uncontrolled Type 2 Diabetes",
+      "category": "endocrine",
+      "severity": "moderate",
+      "timestamp": "2026-04-06T20:35:36.286Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "Maria Gonzalez (MRN: 2026-25908, ID: 26)",
+          "time": "2026-04-06T20:35:36.295Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Type 2 Diabetes Mellitus (E11.9)",
+          "time": "2026-04-06T20:35:36.301Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Obesity (E66.9)",
+          "time": "2026-04-06T20:35:36.306Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Hyperlipidemia (E78.5)",
+          "time": "2026-04-06T20:35:36.310Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Metformin 1000mg BID",
+          "time": "2026-04-06T20:35:36.315Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Glipizide 5mg daily",
+          "time": "2026-04-06T20:35:36.320Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Atorvastatin 20mg qHS",
+          "time": "2026-04-06T20:35:36.324Z"
+        },
+        {
+          "step": "Add Allergy",
+          "status": "OK",
+          "detail": "Sulfa (moderate)",
+          "time": "2026-04-06T20:35:36.329Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Hemoglobin A1C: 9.2 % [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.334Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Fasting Glucose: 245 mg/dL [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.339Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Creatinine: 0.9 mg/dL ",
+          "time": "2026-04-06T20:35:36.344Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "eGFR: 78 mL/min ",
+          "time": "2026-04-06T20:35:36.349Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Office Visit - Follow-up — \"Follow-up for diabetes, sugars running 200-300\" (ID: 24)",
+          "time": "2026-04-06T20:35:36.355Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 138/86 | HR 78 | Temp 98.4 | SpO2 98% | Wt 198",
+          "time": "2026-04-06T20:35:36.367Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:36.373Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "2 suggestion(s) generated",
+          "time": "2026-04-06T20:35:36.382Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"A1C Above Target\"",
+          "time": "2026-04-06T20:35:36.383Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Diabetes Monitoring\"",
+          "time": "2026-04-06T20:35:36.383Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypertensive Crisis\"",
+          "time": "2026-04-06T20:35:36.383Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypoxia\"",
+          "time": "2026-04-06T20:35:36.383Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:36.393Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (917 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:36.397Z"
+        }
+      ],
+      "cds_results": [
+        {
+          "id": 225,
+          "suggestion_type": "lab_order",
+          "category": "routine",
+          "priority": 20,
+          "title": "A1C Above Target (Hemoglobin A1C: 9.2 %)",
+          "description": "A1C >= 7.0% in diabetic patient. Consider medication escalation.",
+          "rationale": "Hemoglobin A1C = 9.2 (ref: 4.0-5.6). ADA Standards of Care 2024",
+          "suggested_action": [
+            {
+              "type": "create_prescription",
+              "description": "Consider adding GLP-1 agonist (Ozempic/Semaglutide)",
+              "payload": {
+                "medication_name": "Semaglutide (Ozempic)",
+                "generic_name": "Semaglutide",
+                "dose": "0.25mg",
+                "route": "SC",
+                "frequency": "weekly",
+                "quantity": 4,
+                "refills": 0,
+                "instructions": "Inject 0.25mg SC once weekly. Titrate to 0.5mg after 4 weeks.",
+                "indication": "Type 2 Diabetes Mellitus",
+                "icd10_codes": "E11.9"
+              }
+            },
+            {
+              "type": "create_referral",
+              "description": "Endocrinology referral if A1C > 9.0",
+              "payload": {
+                "specialty": "Endocrinology",
+                "reason": "Uncontrolled Type 2 Diabetes",
+                "urgency": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 226,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Diabetes Monitoring Due (2 tests due)",
+          "description": "Routine diabetes screening tests are due per ADA guidelines. Due: Urine Microalbumin, Lipid Panel.",
+          "rationale": "ADA Standards of Care 2024",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "A1C",
+              "payload": {
+                "test_name": "Hemoglobin A1C",
+                "cpt_code": "83036",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "UACR",
+              "payload": {
+                "test_name": "Urine Microalbumin",
+                "cpt_code": "82043",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_referral",
+              "description": "Annual eye exam",
+              "payload": {
+                "specialty": "Ophthalmology",
+                "reason": "Diabetic retinopathy screening",
+                "urgency": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        }
+      ],
+      "pass": true,
+      "errors": [],
+      "patient_id": 26,
+      "mrn": "2026-25908",
+      "encounter_id": 24
+    },
+    {
+      "id": "CHEST-PAIN-001",
+      "name": "Acute Chest Pain — Rule Out ACS",
+      "category": "cardiovascular",
+      "severity": "urgent",
+      "timestamp": "2026-04-06T20:35:36.397Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "James Thompson (MRN: 2026-73445, ID: 27)",
+          "time": "2026-04-06T20:35:36.403Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Essential Hypertension (I10)",
+          "time": "2026-04-06T20:35:36.409Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Hyperlipidemia (E78.5)",
+          "time": "2026-04-06T20:35:36.413Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Tobacco Use Disorder (F17.210)",
+          "time": "2026-04-06T20:35:36.418Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Coronary Artery Disease (I25.10)",
+          "time": "2026-04-06T20:35:36.423Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Aspirin 81mg daily",
+          "time": "2026-04-06T20:35:36.428Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Atorvastatin 40mg qHS",
+          "time": "2026-04-06T20:35:36.433Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Lisinopril 20mg daily",
+          "time": "2026-04-06T20:35:36.438Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Metoprolol Succinate 50mg BID",
+          "time": "2026-04-06T20:35:36.443Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Office Visit - Urgent — \"Chest pain for 2 hours, pressure-like, radiating to left arm\" (ID: 25)",
+          "time": "2026-04-06T20:35:36.449Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 168/98 | HR 102 | Temp 98.2 | SpO2 94% | Wt 210",
+          "time": "2026-04-06T20:35:36.466Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:36.471Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "6 suggestion(s) generated",
+          "time": "2026-04-06T20:35:36.488Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Stage 2 Hypertension\"",
+          "time": "2026-04-06T20:35:36.488Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Tachycardia\"",
+          "time": "2026-04-06T20:35:36.488Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Differential: Chest Pain\"",
+          "time": "2026-04-06T20:35:36.488Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Hypoxia\"",
+          "time": "2026-04-06T20:35:36.488Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Bradycardia\"",
+          "time": "2026-04-06T20:35:36.488Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Fever\"",
+          "time": "2026-04-06T20:35:36.488Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:36.507Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (960 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:36.511Z"
+        }
+      ],
+      "cds_results": [
+        {
+          "id": 235,
+          "suggestion_type": "vital_alert",
+          "category": "urgent",
+          "priority": 5,
+          "title": "Hypoxia - Low Oxygen Saturation (SpO2 < 95%)",
+          "description": "Oxygen saturation below normal threshold (< 95%). Evaluate for respiratory compromise. Apply supplemental O2 if SpO2 < 92%.",
+          "rationale": "Rule: hypoxia. BTS Oxygen Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_imaging_order",
+              "description": "Order Chest X-ray",
+              "payload": {
+                "study_type": "X-ray",
+                "body_part": "Chest",
+                "cpt_code": "71046"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 236,
+          "suggestion_type": "differential_diagnosis",
+          "category": "urgent",
+          "priority": 5,
+          "title": "Differential: Chest Pain",
+          "description": "Urgent evaluation for chest pain etiology.",
+          "rationale": "Differential diagnoses based on presentation. ACC/AHA Chest Pain Guidelines 2021",
+          "suggested_action": {
+            "differentials": [
+              {
+                "name": "Acute Coronary Syndrome",
+                "code": "I24.9",
+                "likelihood": "high",
+                "workup": "EKG, Troponin, BMP"
+              },
+              {
+                "name": "Pulmonary Embolism",
+                "code": "I26.99",
+                "likelihood": "moderate",
+                "workup": "D-dimer, CT-PA"
+              },
+              {
+                "name": "GERD",
+                "code": "K21.0",
+                "likelihood": "moderate",
+                "workup": "Trial PPI"
+              },
+              {
+                "name": "Musculoskeletal",
+                "code": "M79.3",
+                "likelihood": "moderate",
+                "workup": "Physical exam, reproducible tenderness"
+              },
+              {
+                "name": "Anxiety/Panic",
+                "code": "F41.0",
+                "likelihood": "low",
+                "workup": "Diagnosis of exclusion"
+              }
+            ],
+            "actions": [
+              {
+                "type": "create_imaging_order",
+                "description": "Stat EKG",
+                "payload": {
+                  "study_type": "EKG",
+                  "body_part": "Chest",
+                  "cpt_code": "93000",
+                  "priority": "stat"
+                }
+              },
+              {
+                "type": "create_lab_order",
+                "description": "Troponin",
+                "payload": {
+                  "test_name": "Troponin",
+                  "cpt_code": "84484",
+                  "priority": "stat"
+                }
+              },
+              {
+                "type": "create_imaging_order",
+                "description": "Chest X-ray",
+                "payload": {
+                  "study_type": "X-ray",
+                  "body_part": "Chest",
+                  "cpt_code": "71046",
+                  "priority": "urgent"
+                }
+              }
+            ]
+          },
+          "source": "rule_engine"
+        },
+        {
+          "id": 237,
+          "suggestion_type": "clinical_protocol",
+          "category": "critical",
+          "priority": 5,
+          "title": "HEART Score: 8/10 — High Risk",
+          "description": "HEART score ≥ 7 (high risk). Early invasive strategy indicated. Cardiology consult, antiplatelet therapy, and urgent catheterization per institutional protocol.",
+          "rationale": "HEART score components: History=2, ECG=1 (pending review), Age=2, Risk Factors=2, Troponin=1. Note: ECG score defaults to 1 (non-specific) pending physician review.",
+          "suggested_action": {
+            "protocol": "HEART_SCORE",
+            "score": 8,
+            "components": {
+              "history": 2,
+              "ecg": 1,
+              "age": 2,
+              "riskFactors": 2,
+              "troponin": 1
+            },
+            "actions": [
+              {
+                "type": "order_lab",
+                "description": "Serial Troponin (3-hour)",
+                "payload": {
+                  "test_name": "Troponin I",
+                  "cpt_code": "84484"
+                }
+              },
+              {
+                "type": "order_lab",
+                "description": "Serial Troponin (6-hour)",
+                "payload": {
+                  "test_name": "Troponin I",
+                  "cpt_code": "84484"
+                }
+              }
+            ]
+          },
+          "source": "heart_score_protocol"
+        },
+        {
+          "id": 238,
+          "suggestion_type": "vital_alert",
+          "category": "urgent",
+          "priority": 10,
+          "title": "Stage 2 Hypertension Detected",
+          "description": "BP exceeds Stage 2 threshold (>=140/90). Consider antihypertensive adjustment.",
+          "rationale": "Rule: hypertension_stage2. AHA/ACC 2017 HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "medication_adjustment",
+              "description": "Increase Lisinopril from 20mg to 40mg daily",
+              "payload": {
+                "medication_name": "Lisinopril",
+                "dose": "40mg",
+                "route": "PO",
+                "frequency": "daily"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Order BMP to assess renal function",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 239,
+          "suggestion_type": "vital_alert",
+          "category": "routine",
+          "priority": 20,
+          "title": "Tachycardia Detected",
+          "description": "Heart rate > 100 bpm. Consider EKG and evaluate for underlying cause.",
+          "rationale": "Rule: tachycardia. ACC/AHA Arrhythmia Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_imaging_order",
+              "description": "Order 12-lead EKG",
+              "payload": {
+                "study_type": "EKG",
+                "body_part": "Chest",
+                "cpt_code": "93000"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Check TSH",
+              "payload": {
+                "test_name": "TSH",
+                "cpt_code": "84443",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 240,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Hypertension Monitoring Due (2 tests due)",
+          "description": "Annual HTN monitoring labs are due. Due: Basic Metabolic Panel, Lipid Panel.",
+          "rationale": "AHA/ACC HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "BMP",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        }
+      ],
+      "pass": true,
+      "errors": [],
+      "patient_id": 27,
+      "mrn": "2026-73445",
+      "encounter_id": 25
+    },
+    {
+      "id": "COPD-CHF-001",
+      "name": "COPD Exacerbation with CHF",
+      "category": "pulmonary-cardiac",
+      "severity": "urgent",
+      "timestamp": "2026-04-06T20:35:36.511Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "Willie Johnson (MRN: 2026-33695, ID: 28)",
+          "time": "2026-04-06T20:35:36.517Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "COPD with Acute Exacerbation (J44.1)",
+          "time": "2026-04-06T20:35:36.522Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Heart Failure with Reduced EF (I50.22)",
+          "time": "2026-04-06T20:35:36.526Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Atrial Fibrillation (I48.91)",
+          "time": "2026-04-06T20:35:36.536Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Type 2 Diabetes Mellitus (E11.9)",
+          "time": "2026-04-06T20:35:36.542Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Metoprolol Tartrate 25mg BID",
+          "time": "2026-04-06T20:35:36.547Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Furosemide 40mg daily",
+          "time": "2026-04-06T20:35:36.552Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Apixaban 5mg BID",
+          "time": "2026-04-06T20:35:36.557Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Tiotropium 18mcg daily",
+          "time": "2026-04-06T20:35:36.562Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Albuterol 90mcg PRN",
+          "time": "2026-04-06T20:35:36.567Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Metformin 500mg BID",
+          "time": "2026-04-06T20:35:36.572Z"
+        },
+        {
+          "step": "Add Allergy",
+          "status": "OK",
+          "detail": "Sulfa (moderate)",
+          "time": "2026-04-06T20:35:36.577Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "BNP: 580 pg/mL [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.582Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Hemoglobin A1C: 7.1 % [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.587Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Creatinine: 1.2 mg/dL ",
+          "time": "2026-04-06T20:35:36.592Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Office Visit - Urgent — \"Worsening shortness of breath and leg swelling for 5 days\" (ID: 26)",
+          "time": "2026-04-06T20:35:36.598Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 145/82 | HR 96 | Temp 99.1 | SpO2 89% | Wt 225",
+          "time": "2026-04-06T20:35:36.615Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:36.620Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "5 suggestion(s) generated",
+          "time": "2026-04-06T20:35:36.636Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Hypoxia\"",
+          "time": "2026-04-06T20:35:36.636Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Differential: Shortness of Breath\"",
+          "time": "2026-04-06T20:35:36.636Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"A1C Above Target\"",
+          "time": "2026-04-06T20:35:36.636Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Bradycardia\"",
+          "time": "2026-04-06T20:35:36.636Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypertensive Crisis\"",
+          "time": "2026-04-06T20:35:36.636Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:36.651Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (861 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:36.655Z"
+        }
+      ],
+      "cds_results": [
+        {
+          "id": 252,
+          "suggestion_type": "vital_alert",
+          "category": "urgent",
+          "priority": 5,
+          "title": "Hypoxia - Low Oxygen Saturation (SpO2 < 95%)",
+          "description": "Oxygen saturation below normal threshold (< 95%). Evaluate for respiratory compromise. Apply supplemental O2 if SpO2 < 92%.",
+          "rationale": "Rule: hypoxia. BTS Oxygen Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_imaging_order",
+              "description": "Order Chest X-ray",
+              "payload": {
+                "study_type": "X-ray",
+                "body_part": "Chest",
+                "cpt_code": "71046"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 253,
+          "suggestion_type": "vital_alert",
+          "category": "urgent",
+          "priority": 10,
+          "title": "Stage 2 Hypertension Detected",
+          "description": "BP exceeds Stage 2 threshold (>=140/90). Consider antihypertensive adjustment.",
+          "rationale": "Rule: hypertension_stage2. AHA/ACC 2017 HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "medication_adjustment",
+              "description": "Increase Lisinopril from 20mg to 40mg daily",
+              "payload": {
+                "medication_name": "Lisinopril",
+                "dose": "40mg",
+                "route": "PO",
+                "frequency": "daily"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Order BMP to assess renal function",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 254,
+          "suggestion_type": "differential_diagnosis",
+          "category": "urgent",
+          "priority": 10,
+          "title": "Differential: Shortness of Breath",
+          "description": "Evaluate respiratory and cardiac causes.",
+          "rationale": "Differential diagnoses based on presentation. ATS/ERS Dyspnea Guidelines",
+          "suggested_action": {
+            "differentials": [
+              {
+                "name": "Heart Failure Exacerbation",
+                "code": "I50.9",
+                "likelihood": "high",
+                "workup": "BNP, CXR, Echo"
+              },
+              {
+                "name": "COPD Exacerbation",
+                "code": "J44.1",
+                "likelihood": "high",
+                "workup": "CXR, ABG, PFTs"
+              },
+              {
+                "name": "Pneumonia",
+                "code": "J18.9",
+                "likelihood": "moderate",
+                "workup": "CXR, CBC, Procalcitonin"
+              },
+              {
+                "name": "Pulmonary Embolism",
+                "code": "I26.99",
+                "likelihood": "moderate",
+                "workup": "D-dimer, CT-PA"
+              },
+              {
+                "name": "Anxiety",
+                "code": "F41.0",
+                "likelihood": "low",
+                "workup": "Diagnosis of exclusion"
+              }
+            ],
+            "actions": [
+              {
+                "type": "create_imaging_order",
+                "description": "Chest X-ray",
+                "payload": {
+                  "study_type": "X-ray",
+                  "body_part": "Chest",
+                  "cpt_code": "71046",
+                  "priority": "urgent"
+                }
+              },
+              {
+                "type": "create_lab_order",
+                "description": "BNP",
+                "payload": {
+                  "test_name": "BNP",
+                  "cpt_code": "83880",
+                  "priority": "urgent"
+                }
+              },
+              {
+                "type": "create_lab_order",
+                "description": "CBC",
+                "payload": {
+                  "test_name": "Complete Blood Count",
+                  "cpt_code": "85025",
+                  "priority": "urgent"
+                }
+              }
+            ]
+          },
+          "source": "rule_engine"
+        },
+        {
+          "id": 255,
+          "suggestion_type": "lab_order",
+          "category": "routine",
+          "priority": 20,
+          "title": "A1C Above Target (Hemoglobin A1C: 7.1 %)",
+          "description": "A1C >= 7.0% in diabetic patient. Consider medication escalation.",
+          "rationale": "Hemoglobin A1C = 7.1 (ref: 4.0-5.6). ADA Standards of Care 2024",
+          "suggested_action": [
+            {
+              "type": "create_prescription",
+              "description": "Consider adding GLP-1 agonist (Ozempic/Semaglutide)",
+              "payload": {
+                "medication_name": "Semaglutide (Ozempic)",
+                "generic_name": "Semaglutide",
+                "dose": "0.25mg",
+                "route": "SC",
+                "frequency": "weekly",
+                "quantity": 4,
+                "refills": 0,
+                "instructions": "Inject 0.25mg SC once weekly. Titrate to 0.5mg after 4 weeks.",
+                "indication": "Type 2 Diabetes Mellitus",
+                "icd10_codes": "E11.9"
+              }
+            },
+            {
+              "type": "create_referral",
+              "description": "Endocrinology referral if A1C > 9.0",
+              "payload": {
+                "specialty": "Endocrinology",
+                "reason": "Uncontrolled Type 2 Diabetes",
+                "urgency": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 256,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Diabetes Monitoring Due (2 tests due)",
+          "description": "Routine diabetes screening tests are due per ADA guidelines. Due: Urine Microalbumin, Lipid Panel.",
+          "rationale": "ADA Standards of Care 2024",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "A1C",
+              "payload": {
+                "test_name": "Hemoglobin A1C",
+                "cpt_code": "83036",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "UACR",
+              "payload": {
+                "test_name": "Urine Microalbumin",
+                "cpt_code": "82043",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_referral",
+              "description": "Annual eye exam",
+              "payload": {
+                "specialty": "Ophthalmology",
+                "reason": "Diabetic retinopathy screening",
+                "urgency": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        }
+      ],
+      "pass": true,
+      "errors": [],
+      "patient_id": 28,
+      "mrn": "2026-33695",
+      "encounter_id": 26
+    },
+    {
+      "id": "HTN-CRISIS-001",
+      "name": "Hypertensive Crisis",
+      "category": "cardiovascular",
+      "severity": "emergent",
+      "timestamp": "2026-04-06T20:35:36.655Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "Tamika Washington (MRN: 2026-53970, ID: 29)",
+          "time": "2026-04-06T20:35:36.662Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Essential Hypertension (I10)",
+          "time": "2026-04-06T20:35:36.666Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Migraine without aura (G43.909)",
+          "time": "2026-04-06T20:35:36.672Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Generalized Anxiety Disorder (F41.1)",
+          "time": "2026-04-06T20:35:36.676Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Amlodipine 10mg daily",
+          "time": "2026-04-06T20:35:36.683Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Hydrochlorothiazide 25mg daily",
+          "time": "2026-04-06T20:35:36.689Z"
+        },
+        {
+          "step": "Add Allergy",
+          "status": "OK",
+          "detail": "ACE Inhibitors (moderate)",
+          "time": "2026-04-06T20:35:36.695Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Office Visit - Urgent — \"Severe headache and blurred vision, hasn't taken medications in 2 weeks\" (ID: 27)",
+          "time": "2026-04-06T20:35:36.704Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 192/118 | HR 98 | Temp 98.6 | SpO2 97% | Wt 175",
+          "time": "2026-04-06T20:35:36.716Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:36.721Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "3 suggestion(s) generated",
+          "time": "2026-04-06T20:35:36.733Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Hypertensive Crisis\"",
+          "time": "2026-04-06T20:35:36.733Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Stage 2 Hypertension\"",
+          "time": "2026-04-06T20:35:36.733Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypoxia\"",
+          "time": "2026-04-06T20:35:36.733Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Bradycardia\"",
+          "time": "2026-04-06T20:35:36.733Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Tachycardia\"",
+          "time": "2026-04-06T20:35:36.733Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:36.744Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (885 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:36.748Z"
+        }
+      ],
+      "cds_results": [
+        {
+          "id": 265,
+          "suggestion_type": "vital_alert",
+          "category": "urgent",
+          "priority": 1,
+          "title": "HYPERTENSIVE CRISIS",
+          "description": "BP >= 180/120. Immediate intervention required. Assess for end-organ damage.",
+          "rationale": "Rule: hypertensive_crisis. AHA/ACC 2017 HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "vital_alert",
+              "description": "Recheck BP in 5 minutes. Consider IV antihypertensive."
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 266,
+          "suggestion_type": "vital_alert",
+          "category": "urgent",
+          "priority": 10,
+          "title": "Stage 2 Hypertension Detected",
+          "description": "BP exceeds Stage 2 threshold (>=140/90). Consider antihypertensive adjustment.",
+          "rationale": "Rule: hypertension_stage2. AHA/ACC 2017 HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "medication_adjustment",
+              "description": "Increase Lisinopril from 20mg to 40mg daily",
+              "payload": {
+                "medication_name": "Lisinopril",
+                "dose": "40mg",
+                "route": "PO",
+                "frequency": "daily"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Order BMP to assess renal function",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 267,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Hypertension Monitoring Due (2 tests due)",
+          "description": "Annual HTN monitoring labs are due. Due: Basic Metabolic Panel, Lipid Panel.",
+          "rationale": "AHA/ACC HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "BMP",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        }
+      ],
+      "pass": true,
+      "errors": [],
+      "patient_id": 29,
+      "mrn": "2026-53970",
+      "encounter_id": 27
+    },
+    {
+      "id": "CKD-MED-ADJ-001",
+      "name": "CKD Stage 3 with Medication Adjustments",
+      "category": "renal",
+      "severity": "moderate",
+      "timestamp": "2026-04-06T20:35:36.748Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "Harold Mitchell (MRN: 2026-30684, ID: 30)",
+          "time": "2026-04-06T20:35:36.753Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "CKD Stage 3b (N18.31)",
+          "time": "2026-04-06T20:35:36.758Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Type 2 DM with Diabetic CKD (E11.65)",
+          "time": "2026-04-06T20:35:36.766Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Essential Hypertension (I10)",
+          "time": "2026-04-06T20:35:36.772Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Hyperlipidemia (E78.5)",
+          "time": "2026-04-06T20:35:36.777Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Metformin 1000mg BID",
+          "time": "2026-04-06T20:35:36.782Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Lisinopril 40mg daily",
+          "time": "2026-04-06T20:35:36.789Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Atorvastatin 40mg qHS",
+          "time": "2026-04-06T20:35:36.795Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Amlodipine 5mg daily",
+          "time": "2026-04-06T20:35:36.799Z"
+        },
+        {
+          "step": "Add Allergy",
+          "status": "OK",
+          "detail": "Penicillin (severe)",
+          "time": "2026-04-06T20:35:36.804Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Creatinine: 1.8 mg/dL [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.809Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "eGFR: 42 mL/min [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.813Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Hemoglobin A1C: 7.5 % [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.819Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Urine Microalbumin: 120 mg/L [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.824Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Potassium: 5.1 mEq/L [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.829Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Office Visit - Follow-up — \"Follow-up for kidney function, recent labs showed decline\" (ID: 28)",
+          "time": "2026-04-06T20:35:36.839Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 148/88 | HR 72 | Temp 98.4 | SpO2 97% | Wt 195",
+          "time": "2026-04-06T20:35:36.863Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:36.868Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "10 suggestion(s) generated",
+          "time": "2026-04-06T20:35:36.892Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Elevated Creatinine\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Declining Kidney Function\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Elevated Microalbumin\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"A1C Above Target\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Stage 2 Hypertension\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Metformin Dose Adjustment\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"ACE/ARB + CKD\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"CKD Monitoring\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypertensive Crisis\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Tachycardia\"",
+          "time": "2026-04-06T20:35:36.893Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:36.915Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (814 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:36.919Z"
+        }
+      ],
+      "cds_results": [
+        {
+          "id": 281,
+          "suggestion_type": "vital_alert",
+          "category": "urgent",
+          "priority": 10,
+          "title": "Stage 2 Hypertension Detected",
+          "description": "BP exceeds Stage 2 threshold (>=140/90). Consider antihypertensive adjustment.",
+          "rationale": "Rule: hypertension_stage2. AHA/ACC 2017 HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "medication_adjustment",
+              "description": "Increase Lisinopril from 20mg to 40mg daily",
+              "payload": {
+                "medication_name": "Lisinopril",
+                "dose": "40mg",
+                "route": "PO",
+                "frequency": "daily"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Order BMP to assess renal function",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 282,
+          "suggestion_type": "interaction_alert",
+          "category": "urgent",
+          "priority": 10,
+          "title": "Metformin Dose Adjustment for Renal Function",
+          "description": "Patient on Metformin with eGFR < 45. Reduce dose to 500mg BID. Discontinue if eGFR < 30.",
+          "rationale": "FDA Metformin Label / ADA Guidelines",
+          "suggested_action": [
+            {
+              "type": "dose_adjustment",
+              "description": "Reduce Metformin to 500mg BID (eGFR 30-45) or discontinue (eGFR < 30)",
+              "payload": {
+                "medication_name": "Metformin",
+                "dose": "500mg",
+                "frequency": "BID"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 283,
+          "suggestion_type": "lab_order",
+          "category": "routine",
+          "priority": 20,
+          "title": "A1C Above Target (Hemoglobin A1C: 7.5 %)",
+          "description": "A1C >= 7.0% in diabetic patient. Consider medication escalation.",
+          "rationale": "Hemoglobin A1C = 7.5 (ref: 4.0-5.6). ADA Standards of Care 2024",
+          "suggested_action": [
+            {
+              "type": "create_prescription",
+              "description": "Consider adding GLP-1 agonist (Ozempic/Semaglutide)",
+              "payload": {
+                "medication_name": "Semaglutide (Ozempic)",
+                "generic_name": "Semaglutide",
+                "dose": "0.25mg",
+                "route": "SC",
+                "frequency": "weekly",
+                "quantity": 4,
+                "refills": 0,
+                "instructions": "Inject 0.25mg SC once weekly. Titrate to 0.5mg after 4 weeks.",
+                "indication": "Type 2 Diabetes Mellitus",
+                "icd10_codes": "E11.9"
+              }
+            },
+            {
+              "type": "create_referral",
+              "description": "Endocrinology referral if A1C > 9.0",
+              "payload": {
+                "specialty": "Endocrinology",
+                "reason": "Uncontrolled Type 2 Diabetes",
+                "urgency": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 284,
+          "suggestion_type": "lab_order",
+          "category": "routine",
+          "priority": 25,
+          "title": "Declining Kidney Function (eGFR < 60) (eGFR: 42 mL/min)",
+          "description": "eGFR indicates CKD Stage 3+. Monitor closely, consider nephrology referral.",
+          "rationale": "eGFR = 42 (ref: >60). KDIGO CKD Guidelines 2024",
+          "suggested_action": [
+            {
+              "type": "create_referral",
+              "description": "Nephrology referral",
+              "payload": {
+                "specialty": "Nephrology",
+                "reason": "CKD Stage 3 - declining eGFR",
+                "urgency": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Order UACR",
+              "payload": {
+                "test_name": "Urine Microalbumin",
+                "cpt_code": "82043",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 285,
+          "suggestion_type": "lab_order",
+          "category": "routine",
+          "priority": 25,
+          "title": "Elevated Microalbumin (UACR > 30) (Urine Microalbumin: 120 mg/L)",
+          "description": "Albumin in urine indicates kidney damage. Maximize ACE/ARB therapy.",
+          "rationale": "Urine Microalbumin = 120 (ref: <30). ADA/KDIGO Diabetic Kidney Disease Guidelines",
+          "suggested_action": [
+            {
+              "type": "medication_adjustment",
+              "description": "Maximize ACE inhibitor / ARB dose",
+              "payload": {
+                "medication_name": "Lisinopril",
+                "dose": "40mg",
+                "route": "PO",
+                "frequency": "daily"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 286,
+          "suggestion_type": "lab_order",
+          "category": "routine",
+          "priority": 30,
+          "title": "Elevated Creatinine (Creatinine: 1.8 mg/dL)",
+          "description": "Creatinine above reference range. Follow up with BMP. Review nephrotoxic medications.",
+          "rationale": "Creatinine = 1.8 (ref: 0.6-1.2). KDIGO Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "Follow-up BMP",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 287,
+          "suggestion_type": "interaction_alert",
+          "category": "routine",
+          "priority": 30,
+          "title": "ACE/ARB + CKD: Monitor Potassium",
+          "description": "Patient on ACE inhibitor/ARB with CKD. Monitor serum potassium closely.",
+          "rationale": "KDIGO CKD Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "Order BMP to check potassium",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 288,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Diabetes Monitoring Due (1 test due)",
+          "description": "Routine diabetes screening tests are due per ADA guidelines. Due: Lipid Panel.",
+          "rationale": "ADA Standards of Care 2024",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "A1C",
+              "payload": {
+                "test_name": "Hemoglobin A1C",
+                "cpt_code": "83036",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "UACR",
+              "payload": {
+                "test_name": "Urine Microalbumin",
+                "cpt_code": "82043",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_referral",
+              "description": "Annual eye exam",
+              "payload": {
+                "specialty": "Ophthalmology",
+                "reason": "Diabetic retinopathy screening",
+                "urgency": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 289,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "CKD Monitoring Due (1 test due)",
+          "description": "Routine CKD monitoring labs are due per KDIGO guidelines. Due: Basic Metabolic Panel.",
+          "rationale": "KDIGO CKD Guidelines 2024",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "BMP",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "UACR",
+              "payload": {
+                "test_name": "Urine Microalbumin",
+                "cpt_code": "82043",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 290,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Hypertension Monitoring Due (2 tests due)",
+          "description": "Annual HTN monitoring labs are due. Due: Basic Metabolic Panel, Lipid Panel.",
+          "rationale": "AHA/ACC HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "BMP",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        }
+      ],
+      "pass": true,
+      "errors": [],
+      "patient_id": 30,
+      "mrn": "2026-30684",
+      "encounter_id": 28
+    },
+    {
+      "id": "NEW-DM-001",
+      "name": "New Onset Type 2 Diabetes in Young Adult",
+      "category": "endocrine",
+      "severity": "moderate",
+      "timestamp": "2026-04-06T20:35:36.919Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "Ashley Davis (MRN: 2026-24050, ID: 31)",
+          "time": "2026-04-06T20:35:36.926Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Type 2 Diabetes Mellitus (E11.9)",
+          "time": "2026-04-06T20:35:36.930Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Obesity, BMI 30-34.9 (E66.01)",
+          "time": "2026-04-06T20:35:36.935Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Family History of Diabetes (Z83.3)",
+          "time": "2026-04-06T20:35:36.940Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Oral Contraceptive 0.25mg-35mcg daily",
+          "time": "2026-04-06T20:35:36.945Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Hemoglobin A1C: 10.2 % [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.950Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Fasting Glucose: 310 mg/dL [ABNORMAL]",
+          "time": "2026-04-06T20:35:36.954Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Office Visit - New Problem — \"Excessive thirst and urination for 3 weeks, lost 8 pounds\" (ID: 29)",
+          "time": "2026-04-06T20:35:36.963Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 118/74 | HR 82 | Temp 98.6 | SpO2 99% | Wt 185",
+          "time": "2026-04-06T20:35:36.979Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:36.984Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "2 suggestion(s) generated",
+          "time": "2026-04-06T20:35:36.996Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"A1C Above Target\"",
+          "time": "2026-04-06T20:35:36.996Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Diabetes Monitoring\"",
+          "time": "2026-04-06T20:35:36.996Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypertension Stage 2\"",
+          "time": "2026-04-06T20:35:36.996Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypoxia\"",
+          "time": "2026-04-06T20:35:36.996Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:37.005Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (1001 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:37.008Z"
+        }
+      ],
+      "cds_results": [
+        {
+          "id": 303,
+          "suggestion_type": "lab_order",
+          "category": "routine",
+          "priority": 20,
+          "title": "A1C Above Target (Hemoglobin A1C: 10.2 %)",
+          "description": "A1C >= 7.0% in diabetic patient. Consider medication escalation.",
+          "rationale": "Hemoglobin A1C = 10.2 (ref: 4.0-5.6). ADA Standards of Care 2024",
+          "suggested_action": [
+            {
+              "type": "create_prescription",
+              "description": "Consider adding GLP-1 agonist (Ozempic/Semaglutide)",
+              "payload": {
+                "medication_name": "Semaglutide (Ozempic)",
+                "generic_name": "Semaglutide",
+                "dose": "0.25mg",
+                "route": "SC",
+                "frequency": "weekly",
+                "quantity": 4,
+                "refills": 0,
+                "instructions": "Inject 0.25mg SC once weekly. Titrate to 0.5mg after 4 weeks.",
+                "indication": "Type 2 Diabetes Mellitus",
+                "icd10_codes": "E11.9"
+              }
+            },
+            {
+              "type": "create_referral",
+              "description": "Endocrinology referral if A1C > 9.0",
+              "payload": {
+                "specialty": "Endocrinology",
+                "reason": "Uncontrolled Type 2 Diabetes",
+                "urgency": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 304,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Diabetes Monitoring Due (2 tests due)",
+          "description": "Routine diabetes screening tests are due per ADA guidelines. Due: Urine Microalbumin, Lipid Panel.",
+          "rationale": "ADA Standards of Care 2024",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "A1C",
+              "payload": {
+                "test_name": "Hemoglobin A1C",
+                "cpt_code": "83036",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "UACR",
+              "payload": {
+                "test_name": "Urine Microalbumin",
+                "cpt_code": "82043",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_referral",
+              "description": "Annual eye exam",
+              "payload": {
+                "specialty": "Ophthalmology",
+                "reason": "Diabetic retinopathy screening",
+                "urgency": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        }
+      ],
+      "pass": true,
+      "errors": [],
+      "patient_id": 31,
+      "mrn": "2026-24050",
+      "encounter_id": 29
+    },
+    {
+      "id": "ELDERLY-FALLS-001",
+      "name": "Elderly Fall Risk with Polypharmacy",
+      "category": "geriatric",
+      "severity": "moderate",
+      "timestamp": "2026-04-06T20:35:37.009Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "Dorothy Patterson (MRN: 2026-74515, ID: 32)",
+          "time": "2026-04-06T20:35:37.015Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Atrial Fibrillation (I48.91)",
+          "time": "2026-04-06T20:35:37.019Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Essential Hypertension (I10)",
+          "time": "2026-04-06T20:35:37.024Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Osteoporosis without Fracture (M81.0)",
+          "time": "2026-04-06T20:35:37.028Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Major Depressive Disorder (F32.9)",
+          "time": "2026-04-06T20:35:37.033Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Hypothyroidism (E03.9)",
+          "time": "2026-04-06T20:35:37.039Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Metoprolol Succinate 100mg BID",
+          "time": "2026-04-06T20:35:37.043Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Lisinopril 20mg daily",
+          "time": "2026-04-06T20:35:37.050Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Warfarin 5mg daily",
+          "time": "2026-04-06T20:35:37.057Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Sertraline 100mg daily",
+          "time": "2026-04-06T20:35:37.063Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Levothyroxine 75mcg daily",
+          "time": "2026-04-06T20:35:37.068Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Calcium Carbonate 600mg BID",
+          "time": "2026-04-06T20:35:37.073Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Vitamin D3 2000IU daily",
+          "time": "2026-04-06T20:35:37.079Z"
+        },
+        {
+          "step": "Add Allergy",
+          "status": "OK",
+          "detail": "Codeine (moderate)",
+          "time": "2026-04-06T20:35:37.084Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Office Visit - Acute — \"Dizziness and two falls this month\" (ID: 30)",
+          "time": "2026-04-06T20:35:37.093Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 108/62 | HR 48 | Temp 97.8 | SpO2 96% | Wt 132",
+          "time": "2026-04-06T20:35:37.104Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:37.110Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "2 suggestion(s) generated",
+          "time": "2026-04-06T20:35:37.120Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Bradycardia\"",
+          "time": "2026-04-06T20:35:37.121Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypertension Stage 2\"",
+          "time": "2026-04-06T20:35:37.121Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypertensive Crisis\"",
+          "time": "2026-04-06T20:35:37.121Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Tachycardia\"",
+          "time": "2026-04-06T20:35:37.121Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Fever\"",
+          "time": "2026-04-06T20:35:37.121Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:37.131Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (890 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:37.135Z"
+        }
+      ],
+      "cds_results": [
+        {
+          "id": 309,
+          "suggestion_type": "vital_alert",
+          "category": "urgent",
+          "priority": 15,
+          "title": "Bradycardia Detected",
+          "description": "Heart rate < 50 bpm. Review medications (beta-blockers, CCBs). Consider EKG.",
+          "rationale": "Rule: bradycardia. ACC/AHA Arrhythmia Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_imaging_order",
+              "description": "Order 12-lead EKG",
+              "payload": {
+                "study_type": "EKG",
+                "body_part": "Chest",
+                "cpt_code": "93000"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 310,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Hypertension Monitoring Due (2 tests due)",
+          "description": "Annual HTN monitoring labs are due. Due: Basic Metabolic Panel, Lipid Panel.",
+          "rationale": "AHA/ACC HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "BMP",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        }
+      ],
+      "pass": true,
+      "errors": [],
+      "patient_id": 32,
+      "mrn": "2026-74515",
+      "encounter_id": 30
+    },
+    {
+      "id": "CHRONIC-PAIN-001",
+      "name": "Chronic Pain with Medication Considerations",
+      "category": "musculoskeletal",
+      "severity": "routine",
+      "timestamp": "2026-04-06T20:35:37.135Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "Michael Carter (MRN: 2026-68615, ID: 33)",
+          "time": "2026-04-06T20:35:37.141Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Chronic Low Back Pain (M54.5)",
+          "time": "2026-04-06T20:35:37.146Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Lumbar Degenerative Disc Disease (M51.36)",
+          "time": "2026-04-06T20:35:37.151Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Essential Hypertension (I10)",
+          "time": "2026-04-06T20:35:37.156Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Obesity (E66.9)",
+          "time": "2026-04-06T20:35:37.161Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "GERD (K21.0)",
+          "time": "2026-04-06T20:35:37.166Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Gabapentin 300mg TID",
+          "time": "2026-04-06T20:35:37.171Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Meloxicam 15mg daily",
+          "time": "2026-04-06T20:35:37.176Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Omeprazole 20mg daily",
+          "time": "2026-04-06T20:35:37.180Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Lisinopril 10mg daily",
+          "time": "2026-04-06T20:35:37.185Z"
+        },
+        {
+          "step": "Add Allergy",
+          "status": "OK",
+          "detail": "Tramadol (severe)",
+          "time": "2026-04-06T20:35:37.191Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Office Visit - Follow-up — \"Back pain flare-up, current medications not controlling pain\" (ID: 31)",
+          "time": "2026-04-06T20:35:37.199Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 142/88 | HR 80 | Temp 98.4 | SpO2 98% | Wt 210",
+          "time": "2026-04-06T20:35:37.209Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:37.216Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "2 suggestion(s) generated",
+          "time": "2026-04-06T20:35:37.226Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Stage 2 Hypertension\"",
+          "time": "2026-04-06T20:35:37.226Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypertensive Crisis\"",
+          "time": "2026-04-06T20:35:37.226Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Tachycardia\"",
+          "time": "2026-04-06T20:35:37.226Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypoxia\"",
+          "time": "2026-04-06T20:35:37.226Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:37.236Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (844 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:37.240Z"
+        }
+      ],
+      "cds_results": [
+        {
+          "id": 315,
+          "suggestion_type": "vital_alert",
+          "category": "urgent",
+          "priority": 10,
+          "title": "Stage 2 Hypertension Detected",
+          "description": "BP exceeds Stage 2 threshold (>=140/90). Consider antihypertensive adjustment.",
+          "rationale": "Rule: hypertension_stage2. AHA/ACC 2017 HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "medication_adjustment",
+              "description": "Increase Lisinopril from 20mg to 40mg daily",
+              "payload": {
+                "medication_name": "Lisinopril",
+                "dose": "40mg",
+                "route": "PO",
+                "frequency": "daily"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Order BMP to assess renal function",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 316,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Hypertension Monitoring Due (2 tests due)",
+          "description": "Annual HTN monitoring labs are due. Due: Basic Metabolic Panel, Lipid Panel.",
+          "rationale": "AHA/ACC HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "BMP",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        }
+      ],
+      "pass": true,
+      "errors": [],
+      "patient_id": 33,
+      "mrn": "2026-68615",
+      "encounter_id": 31
+    },
+    {
+      "id": "THYROID-FERTILITY-001",
+      "name": "Hypothyroidism Affecting Fertility",
+      "category": "endocrine-reproductive",
+      "severity": "routine",
+      "timestamp": "2026-04-06T20:35:37.240Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "Jessica Morgan (MRN: 2026-79809, ID: 34)",
+          "time": "2026-04-06T20:35:37.246Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Hypothyroidism (E03.9)",
+          "time": "2026-04-06T20:35:37.250Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Female Infertility (N97.9)",
+          "time": "2026-04-06T20:35:37.254Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Iron Deficiency Anemia (D50.9)",
+          "time": "2026-04-06T20:35:37.259Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Prenatal Vitamin 1 tablet daily",
+          "time": "2026-04-06T20:35:37.264Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Ferrous Sulfate 325mg daily",
+          "time": "2026-04-06T20:35:37.268Z"
+        },
+        {
+          "step": "Add Allergy",
+          "status": "OK",
+          "detail": "Latex (mild)",
+          "time": "2026-04-06T20:35:37.272Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "TSH: 8.4 mIU/L [ABNORMAL]",
+          "time": "2026-04-06T20:35:37.277Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Free T4: 0.7 ng/dL [ABNORMAL]",
+          "time": "2026-04-06T20:35:37.282Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Hemoglobin: 10.8 g/dL [ABNORMAL]",
+          "time": "2026-04-06T20:35:37.289Z"
+        },
+        {
+          "step": "Add Lab Result",
+          "status": "OK",
+          "detail": "Ferritin: 12 ng/mL [ABNORMAL]",
+          "time": "2026-04-06T20:35:37.293Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Office Visit - New Problem — \"Fatigue, weight gain, trying to get pregnant for 6 months\" (ID: 32)",
+          "time": "2026-04-06T20:35:37.300Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 112/72 | HR 62 | Temp 97.6 | SpO2 99% | Wt 158",
+          "time": "2026-04-06T20:35:37.307Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:37.313Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "0 suggestion(s) generated",
+          "time": "2026-04-06T20:35:37.318Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypertension Stage 2\"",
+          "time": "2026-04-06T20:35:37.318Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Tachycardia\"",
+          "time": "2026-04-06T20:35:37.318Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypoxia\"",
+          "time": "2026-04-06T20:35:37.318Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:37.325Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (852 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:37.330Z"
+        }
+      ],
+      "cds_results": [],
+      "pass": true,
+      "errors": [],
+      "patient_id": 34,
+      "mrn": "2026-79809",
+      "encounter_id": 32
+    },
+    {
+      "id": "ANNUAL-WELLNESS-001",
+      "name": "Multi-Morbidity Annual Wellness Visit",
+      "category": "preventive",
+      "severity": "routine",
+      "timestamp": "2026-04-06T20:35:37.330Z",
+      "steps": [
+        {
+          "step": "Create Patient",
+          "status": "OK",
+          "detail": "Charles Henderson (MRN: 2026-98521, ID: 35)",
+          "time": "2026-04-06T20:35:37.336Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Type 2 Diabetes Mellitus (E11.9)",
+          "time": "2026-04-06T20:35:37.341Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Essential Hypertension (I10)",
+          "time": "2026-04-06T20:35:37.346Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Benign Prostatic Hyperplasia (N40.0)",
+          "time": "2026-04-06T20:35:37.351Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Primary Osteoarthritis Right Knee (M17.11)",
+          "time": "2026-04-06T20:35:37.355Z"
+        },
+        {
+          "step": "Add Problem",
+          "status": "OK",
+          "detail": "Hyperlipidemia (E78.5)",
+          "time": "2026-04-06T20:35:37.360Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Metformin 500mg BID",
+          "time": "2026-04-06T20:35:37.365Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Lisinopril 10mg daily",
+          "time": "2026-04-06T20:35:37.369Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Tamsulosin 0.4mg qHS",
+          "time": "2026-04-06T20:35:37.375Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Atorvastatin 20mg qHS",
+          "time": "2026-04-06T20:35:37.379Z"
+        },
+        {
+          "step": "Add Medication",
+          "status": "OK",
+          "detail": "Acetaminophen 500mg PRN",
+          "time": "2026-04-06T20:35:37.391Z"
+        },
+        {
+          "step": "Add Allergy",
+          "status": "OK",
+          "detail": "Sulfa (moderate)",
+          "time": "2026-04-06T20:35:37.396Z"
+        },
+        {
+          "step": "Create Encounter",
+          "status": "OK",
+          "detail": "Annual Wellness Visit — \"Annual wellness visit, feeling generally well\" (ID: 33)",
+          "time": "2026-04-06T20:35:37.404Z"
+        },
+        {
+          "step": "Record Vitals",
+          "status": "OK",
+          "detail": "BP 134/78 | HR 70 | Temp 98.2 | SpO2 97% | Wt 180",
+          "time": "2026-04-06T20:35:37.415Z"
+        },
+        {
+          "step": "Create Workflow",
+          "status": "OK",
+          "detail": "State: scheduled",
+          "time": "2026-04-06T20:35:37.421Z"
+        },
+        {
+          "step": "CDS Evaluation",
+          "status": "OK",
+          "detail": "2 suggestion(s) generated",
+          "time": "2026-04-06T20:35:37.430Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Diabetes Monitoring\"",
+          "time": "2026-04-06T20:35:37.431Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Expected rule fired: \"Hypertension Monitoring\"",
+          "time": "2026-04-06T20:35:37.431Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypertensive Crisis\"",
+          "time": "2026-04-06T20:35:37.431Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Tachycardia\"",
+          "time": "2026-04-06T20:35:37.431Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Hypoxia\"",
+          "time": "2026-04-06T20:35:37.431Z"
+        },
+        {
+          "step": "CDS Verify",
+          "status": "OK",
+          "detail": "Correctly absent: \"Bradycardia\"",
+          "time": "2026-04-06T20:35:37.431Z"
+        },
+        {
+          "step": "AI Extract",
+          "status": "OK",
+          "detail": "Vitals: 0 fields | Meds: 0 | Problems: 0",
+          "time": "2026-04-06T20:35:37.441Z"
+        },
+        {
+          "step": "SOAP Note",
+          "status": "OK",
+          "detail": "Generated (842 chars) — All 4 sections present",
+          "time": "2026-04-06T20:35:37.447Z"
+        }
+      ],
+      "cds_results": [
+        {
+          "id": 321,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Diabetes Monitoring Due (3 tests due)",
+          "description": "Routine diabetes screening tests are due per ADA guidelines. Due: Hemoglobin A1C, Urine Microalbumin, Lipid Panel.",
+          "rationale": "ADA Standards of Care 2024",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "A1C",
+              "payload": {
+                "test_name": "Hemoglobin A1C",
+                "cpt_code": "83036",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "UACR",
+              "payload": {
+                "test_name": "Urine Microalbumin",
+                "cpt_code": "82043",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_referral",
+              "description": "Annual eye exam",
+              "payload": {
+                "specialty": "Ophthalmology",
+                "reason": "Diabetic retinopathy screening",
+                "urgency": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        },
+        {
+          "id": 322,
+          "suggestion_type": "preventive_care",
+          "category": "routine",
+          "priority": 50,
+          "title": "Hypertension Monitoring Due (2 tests due)",
+          "description": "Annual HTN monitoring labs are due. Due: Basic Metabolic Panel, Lipid Panel.",
+          "rationale": "AHA/ACC HTN Guidelines",
+          "suggested_action": [
+            {
+              "type": "create_lab_order",
+              "description": "BMP",
+              "payload": {
+                "test_name": "Basic Metabolic Panel",
+                "cpt_code": "80048",
+                "priority": "routine"
+              }
+            },
+            {
+              "type": "create_lab_order",
+              "description": "Lipid Panel",
+              "payload": {
+                "test_name": "Lipid Panel",
+                "cpt_code": "80061",
+                "priority": "routine"
+              }
+            }
+          ],
+          "source": "rule_engine"
+        }
+      ],
+      "pass": true,
+      "errors": [],
+      "patient_id": 35,
+      "mrn": "2026-98521",
+      "encounter_id": 33
+    }
+  ]
+}

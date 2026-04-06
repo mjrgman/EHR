@@ -1,15 +1,18 @@
 /**
  * Database Migrations for Agentic EHR
  *
- * Adds 5 new tables to support:
- * - RBAC (Role-Based Access Control)
- * - HIPAA consent tracking (CATC requirement)
- * - Agent governance audit trail
- * - Safety event logging (4-level system)
- * - Physician override learning
- * - Security event tracking (login attempts)
+ * Adds migration-managed tables to support:
+ * - RBAC (Role-Based Access Control) — users
+ * - HIPAA consent tracking (CATC requirement) — patient_consent
+ * - Agent governance audit trail — agent_audit_trail
+ * - Safety event logging (4-level system) — safety_events
+ * - Physician override learning — physician_overrides
+ * - Security event tracking — login_attempts
+ * - Scheduling — appointments
+ * - Revenue cycle — charges
+ * - FHIR ingestion staging — fhir_ingest_jobs, fhir_ingest_items, fhir_id_map
  *
- * Run after database initialization with existing 19 tables.
+ * Run after database initialization. Called on every server start.
  * Idempotent - safe to run multiple times.
  *
  * Usage:
@@ -27,6 +30,7 @@ async function runMigrations(db) {
 
   try {
     await createUsersTable(db);
+    await repairRefreshTokensFk(db);
     await createPatientConsentTable(db);
     await createAgentAuditTrailTable(db);
     await createSafetyEventsTable(db);
@@ -37,6 +41,7 @@ async function runMigrations(db) {
     await migrateSuggestionTypes(db);
     await createAppointmentsTable(db);
     await createChargesTable(db);
+    await createFhirIngestTables(db);
 
     console.log('[MIGRATIONS] All migrations completed successfully');
     return { success: true, message: 'All migrations completed' };
@@ -55,7 +60,7 @@ async function runMigrations(db) {
  * Stores system users with roles and authentication metadata
  */
 async function createUsersTable(db) {
-  return dbRun(db, `
+  const usersTableSql = `
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
@@ -67,7 +72,8 @@ async function createUsersTable(db) {
         'ma',
         'front_desk',
         'billing',
-        'admin'
+        'admin',
+        'system'
       )),
       full_name TEXT NOT NULL,
       npi_number TEXT,
@@ -84,7 +90,60 @@ async function createUsersTable(db) {
         OR role NOT IN ('physician', 'nurse_practitioner', 'physician_assistant')
       )
     )
-  `);
+  `;
+
+  await dbRun(db, usersTableSql);
+
+  const userColumns = await dbAllCompat(db, `PRAGMA table_info(users)`);
+  const columnNames = new Set(userColumns.map(column => column.name));
+  const needsRebuild =
+    columnNames.has('display_name') ||
+    !columnNames.has('full_name') ||
+    !columnNames.has('email') ||
+    !columnNames.has('phone') ||
+    !columnNames.has('npi_number') ||
+    !columnNames.has('failed_login_count') ||
+    !columnNames.has('locked_until');
+
+  if (!needsRebuild) {
+    return;
+  }
+
+  const existingUsers = await dbAllCompat(db, 'SELECT * FROM users');
+  await dbRun(db, 'PRAGMA foreign_keys=OFF');
+  await dbRun(db, 'ALTER TABLE users RENAME TO users_legacy');
+  await dbRun(db, usersTableSql);
+
+  for (const user of existingUsers) {
+    const fullName = user.full_name || user.display_name || user.username;
+    const email = user.email || (String(user.username).includes('@') ? user.username : `${user.username}@local.invalid`);
+    await dbRun(
+      db,
+      `INSERT INTO users (
+        id, username, password_hash, role, full_name, npi_number, email, phone,
+        is_active, last_login, failed_login_count, locked_until, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        user.id,
+        user.username,
+        user.password_hash,
+        user.role || 'admin',
+        fullName,
+        user.npi_number || null,
+        email,
+        user.phone || null,
+        user.is_active ?? 1,
+        user.last_login || null,
+        user.failed_login_count ?? 0,
+        user.locked_until || null,
+        user.created_at || null,
+        user.updated_at || null
+      ]
+    );
+  }
+
+  await dbRun(db, 'DROP TABLE users_legacy');
+  await dbRun(db, 'PRAGMA foreign_keys=ON');
 }
 
 /**
@@ -362,7 +421,7 @@ async function migrateCdsRules(db) {
     [
       JSON.stringify({ field: 'spo2', operator: '<', value: 95 }),
       JSON.stringify({
-        title: 'Low Oxygen Saturation - SpO2 Below 95%',
+        title: 'Hypoxia - Low Oxygen Saturation (SpO2 < 95%)',
         description: 'Oxygen saturation below normal threshold (< 95%). Evaluate for respiratory compromise. Apply supplemental O2 if SpO2 < 92%.',
         category: 'urgent',
         actions: [
@@ -370,6 +429,13 @@ async function migrateCdsRules(db) {
         ]
       })
     ]
+  );
+
+  // Step 2b: Ensure hypoxia rule title includes "Hypoxia" regardless of prior state.
+  await dbRun(db,
+    `UPDATE clinical_rules SET suggested_actions = json_set(suggested_actions, '$.title', 'Hypoxia - Low Oxygen Saturation (SpO2 < 95%)')
+     WHERE rule_name = 'hypoxia'
+       AND json_extract(suggested_actions, '$.title') NOT LIKE '%Hypoxia%'`
   );
 
   // Step 3: Insert new rules (idempotent via INSERT OR IGNORE).
@@ -423,11 +489,10 @@ async function migrateCdsRules(db) {
  * Idempotent — checks constraint text before rebuilding.
  */
 async function migrateSuggestionTypes(db) {
-  const row = await new Promise((resolve, reject) => {
-    db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='cds_suggestions'", (err, r) => {
-      if (err) reject(err); else resolve(r);
-    });
-  });
+  const row = await dbGetCompat(
+    db,
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='cds_suggestions'"
+  );
 
   if (!row) return; // Table doesn't exist yet — initial schema already has correct types
   if (row.sql.includes('clinical_protocol')) {
@@ -562,17 +627,149 @@ async function createChargesTable(db) {
 }
 
 // ==========================================
+// FHIR INGESTION STAGING TABLES
+// ==========================================
+
+/**
+ * Three-table ingestion staging layer:
+ *   fhir_ingest_jobs  — one row per POST /fhir/R4/Bundle request
+ *   fhir_ingest_items — one row per resource entry within a job
+ *   fhir_id_map       — durable map: external FHIR ID -> internal table ID (idempotency anchor)
+ */
+async function createFhirIngestTables(db) {
+  await dbRun(db, `
+    CREATE TABLE IF NOT EXISTS fhir_ingest_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id TEXT UNIQUE NOT NULL,
+      source TEXT,
+      status TEXT NOT NULL CHECK(status IN (
+        'pending','processing','completed','failed','partial'
+      )) DEFAULT 'pending',
+      bundle_type TEXT,
+      resource_count INTEGER DEFAULT 0,
+      success_count INTEGER DEFAULT 0,
+      failure_count INTEGER DEFAULT 0,
+      submitted_by TEXT,
+      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME
+    )
+  `);
+
+  await dbRun(db, `
+    CREATE TABLE IF NOT EXISTS fhir_ingest_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id TEXT NOT NULL,
+      entry_index INTEGER NOT NULL,
+      resource_type TEXT NOT NULL,
+      external_id TEXT,
+      status TEXT NOT NULL CHECK(status IN (
+        'pending','success','failed','skipped'
+      )) DEFAULT 'pending',
+      internal_id INTEGER,
+      error_code TEXT,
+      error_message TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (job_id) REFERENCES fhir_ingest_jobs(job_id)
+    )
+  `);
+
+  await dbRun(db, `
+    CREATE TABLE IF NOT EXISTS fhir_id_map (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      resource_type TEXT NOT NULL,
+      external_id TEXT NOT NULL,
+      internal_id INTEGER NOT NULL,
+      internal_table TEXT NOT NULL,
+      first_seen_job TEXT NOT NULL,
+      last_updated_job TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(resource_type, external_id)
+    )
+  `);
+
+  await dbRun(db, `CREATE INDEX IF NOT EXISTS idx_fhir_id_map_lookup
+    ON fhir_id_map(resource_type, external_id)`);
+  await dbRun(db, `CREATE INDEX IF NOT EXISTS idx_fhir_ingest_items_job
+    ON fhir_ingest_items(job_id)`);
+
+  console.log('[MIGRATIONS] FHIR ingestion staging tables ready');
+}
+
+/**
+ * If the users table was renamed during a prior migration, the refresh_tokens
+ * table may have a stale FK pointing to users_legacy. Drop and let refresh-tokens.js
+ * recreate it on the same startup. Safe — the table has no persistent data on fresh/dev.
+ */
+async function repairRefreshTokensFk(db) {
+  const row = await dbGetCompat(db,
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='refresh_tokens'");
+  if (row && row.sql && row.sql.includes('users_legacy')) {
+    await dbRun(db, 'PRAGMA foreign_keys=OFF');
+    await dbRun(db, 'DROP TABLE IF EXISTS refresh_tokens');
+    await dbRun(db, 'PRAGMA foreign_keys=ON');
+    console.log('[MIGRATIONS] Repaired stale refresh_tokens FK (was pointing to users_legacy)');
+  }
+}
+
+// ==========================================
 // DATABASE HELPER (PROMISIFIED)
 // ==========================================
 
 /**
- * Promisified db.run() for use with async/await
+ * Promisified db.run() for use with async/await.
+ * Accepts either the raw sqlite handle or the app's database wrapper.
  */
 function dbRun(db, sql, params = []) {
+  if (db && typeof db.dbRun === 'function') {
+    return db.dbRun(sql, params);
+  }
+
+  const rawDb = db && typeof db.run === 'function' ? db : db?.db;
+  if (!rawDb || typeof rawDb.run !== 'function') {
+    throw new TypeError('Database handle must expose dbRun() or sqlite run()');
+  }
+
   return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
+    rawDb.run(sql, params, function (err) {
       if (err) reject(err);
       else resolve({ lastID: this.lastID, changes: this.changes });
+    });
+  });
+}
+
+function dbAllCompat(db, sql, params = []) {
+  if (db && typeof db.dbAll === 'function') {
+    return db.dbAll(sql, params);
+  }
+
+  const rawDb = db && typeof db.all === 'function' ? db : db?.db;
+  if (!rawDb || typeof rawDb.all !== 'function') {
+    throw new TypeError('Database handle must expose dbAll() or sqlite all()');
+  }
+
+  return new Promise((resolve, reject) => {
+    rawDb.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+}
+
+function dbGetCompat(db, sql, params = []) {
+  if (db && typeof db.dbGet === 'function') {
+    return db.dbGet(sql, params);
+  }
+
+  const rawDb = db && typeof db.get === 'function' ? db : db?.db;
+  if (!rawDb || typeof rawDb.get !== 'function') {
+    throw new TypeError('Database handle must expose dbGet() or sqlite get()');
+  }
+
+  return new Promise((resolve, reject) => {
+    rawDb.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
     });
   });
 }
@@ -593,5 +790,6 @@ module.exports = {
   migrateCdsRules,
   migrateSuggestionTypes,
   createAppointmentsTable,
-  createChargesTable
+  createChargesTable,
+  createFhirIngestTables
 };

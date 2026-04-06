@@ -18,13 +18,44 @@ const STATES = {
 };
 
 async function createWorkflow(encounterId, patientId, metadata = {}) {
-  const result = await db.createWorkflow({
-    encounter_id: encounterId,
-    patient_id: patientId,
-    assigned_ma: metadata.assigned_ma || null,
-    assigned_provider: metadata.assigned_provider || null
-  });
-  return { id: result.id, state: 'scheduled', encounter_id: encounterId };
+  const existing = await db.getWorkflowState(encounterId);
+  if (existing) {
+    const updates = {};
+
+    if (metadata.assigned_ma && metadata.assigned_ma !== existing.assigned_ma) {
+      updates.assigned_ma = metadata.assigned_ma;
+    }
+    if (metadata.assigned_provider && metadata.assigned_provider !== existing.assigned_provider) {
+      updates.assigned_provider = metadata.assigned_provider;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await db.updateWorkflowState(encounterId, updates);
+    }
+
+    return {
+      id: existing.id,
+      state: existing.current_state,
+      encounter_id: encounterId,
+      existing: true
+    };
+  }
+
+  try {
+    const result = await db.createWorkflow({
+      encounter_id: encounterId,
+      patient_id: patientId,
+      assigned_ma: metadata.assigned_ma || null,
+      assigned_provider: metadata.assigned_provider || null
+    });
+    return { id: result.id, state: 'scheduled', encounter_id: encounterId, existing: false };
+  } catch (err) {
+    if (err.message?.includes('UNIQUE constraint failed: workflow_state.encounter_id')) {
+      const race = await db.getWorkflowState(encounterId);
+      return { id: race.id, state: race.current_state, encounter_id: encounterId, existing: true };
+    }
+    throw err;
+  }
 }
 
 async function getCurrentState(encounterId) {

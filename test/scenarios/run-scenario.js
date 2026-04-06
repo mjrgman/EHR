@@ -17,6 +17,11 @@ const http = require('http');
 const API_BASE = process.env.API_BASE || 'http://localhost:3000/api';
 const SCENARIOS_FILE = path.join(__dirname, 'clinical-scenarios.json');
 const RESULTS_DIR = path.join(__dirname, 'results');
+const requestContext = {
+  sessionId: null,
+  userRole: process.env.TEST_USER_ROLE || 'physician',
+  userId: process.env.TEST_USER_ID || `scenario-runner-${process.pid}`
+};
 
 // ==========================================
 // HTTP CLIENT
@@ -25,15 +30,29 @@ const RESULTS_DIR = path.join(__dirname, 'results');
 function request(method, urlPath, body = null) {
   return new Promise((resolve, reject) => {
     const url = new URL(API_BASE + urlPath);
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-user-role': requestContext.userRole,
+      'x-user-id': requestContext.userId
+    };
+
+    if (requestContext.sessionId) {
+      headers['x-session-id'] = requestContext.sessionId;
+    }
+
     const options = {
       hostname: url.hostname,
       port: url.port,
       path: url.pathname + url.search,
       method,
-      headers: { 'Content-Type': 'application/json' }
+      headers
     };
 
     const req = http.request(options, (res) => {
+      if (res.headers['x-session-id']) {
+        requestContext.sessionId = res.headers['x-session-id'];
+      }
+
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {

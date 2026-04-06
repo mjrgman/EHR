@@ -15,6 +15,7 @@
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { createUsersTable } = require('../database-migrations');
 
 // ==========================================
 // CONFIGURATION
@@ -40,24 +41,14 @@ async function init(dbInstance) {
   if (!dbInstance) throw new Error('Database instance required for auth module');
   db = dbInstance;
 
-  // Create users table if it doesn't exist
-  await db.dbRun(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('physician','nurse_practitioner','ma','front_desk','billing','admin','system')),
-    is_active BOOLEAN DEFAULT 1,
-    last_login DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+  // Create or upgrade users table — must match database-migrations.js schema exactly
+  await createUsersTable(db);
 
   // Check if users table is empty and advise on user creation
   const count = await db.dbGet('SELECT COUNT(*) as c FROM users');
   if (count.c === 0) {
     console.log('[AUTH] No users found. Create users via auth.createUser() or a setup script.');
-    console.log('[AUTH] Example: auth.createUser("dr.renner", "securePassword", "Dr. Renner", "physician")');
+    console.log('[AUTH] Example: auth.createUser("dr.renner", "securePassword", "Dr. Michael Renner", "physician", "dr.renner@clinic.com")');
   }
 
   console.log('[AUTH] Authentication module initialized');
@@ -73,7 +64,7 @@ function signToken(user) {
       sub: user.id,
       username: user.username,
       role: user.role,
-      displayName: user.display_name,
+      fullName: user.full_name,
     },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRY }
@@ -146,7 +137,7 @@ async function login(req, res) {
         id: user.id,
         username: user.username,
         role: user.role,
-        displayName: user.display_name,
+        fullName: user.full_name,
       }
     });
   } catch (error) {
@@ -179,7 +170,7 @@ async function me(req, res) {
     id: req.user.sub,
     username: req.user.username,
     role: req.user.role,
-    displayName: req.user.displayName,
+    fullName: req.user.fullName,
   });
 }
 
@@ -232,7 +223,7 @@ function requireAuth(req, res, next) {
       sub: 0,
       username: req.headers['x-user-id'] || 'dev-physician',
       role: req.headers['x-user-role'] || 'physician',
-      displayName: 'Dev Physician',
+      fullName: 'Dev Physician',
     };
     req.session = req.session || {};
     req.session.userId = req.user.username;
@@ -251,13 +242,13 @@ function requireAuth(req, res, next) {
 /**
  * Create a new user (admin only)
  */
-async function createUser(username, password, displayName, role) {
+async function createUser(username, password, fullName, role, email, phone = null, npiNumber = null) {
   const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const result = await db.dbRun(
-    `INSERT INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?)`,
-    [username, hash, displayName, role]
+    `INSERT INTO users (username, password_hash, full_name, role, email, phone, npi_number) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [username, hash, fullName, role, email, phone, npiNumber]
   );
-  return { id: result.lastID, username, displayName, role };
+  return { id: result.lastID, username, fullName, role, email };
 }
 
 /**

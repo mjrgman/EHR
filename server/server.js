@@ -11,7 +11,11 @@ const audit = require('./audit-logger');
 const logger = require('./utils/logger');
 const { validate, schemas } = require('./utils/validate');
 const auth = require('./security/auth');
+const { runMigrations } = require('./database-migrations');
 const billing = require('./billing-engine');
+const fhirRouter = require('./fhir/router');
+const { buildSmartConfiguration } = require('./fhir/smart/smart-config');
+const { tokenHandler, introspectHandler, authorizeHandler, launchHandler } = require('./fhir/smart/token');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -110,6 +114,40 @@ function sanitizeString(str, maxLength = 500) {
   if (typeof str !== 'string') return str;
   return str.trim().slice(0, maxLength);
 }
+
+// ==========================================
+// SMART-on-FHIR DISCOVERY (unauthenticated — must precede auth middleware)
+// ==========================================
+
+app.get('/.well-known/smart-configuration', (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  res.setHeader('Content-Type', 'application/json');
+  res.json(buildSmartConfiguration(baseUrl));
+});
+
+app.get('/.well-known/jwks.json', (req, res) => {
+  // HMAC (HS256) keys are symmetric and not published in JWKS.
+  // This endpoint acknowledges the spec while documenting the key algorithm.
+  res.json({
+    keys: [],
+    _note: 'This server uses HS256 (symmetric). Token verification requires the shared secret.',
+  });
+});
+
+// ==========================================
+// SMART-on-FHIR ENDPOINTS
+// ==========================================
+
+app.post('/smart/token', tokenHandler);
+app.get('/smart/introspect', introspectHandler);
+app.post('/smart/introspect', introspectHandler);
+app.get('/smart/authorize', authorizeHandler);
+app.get('/smart/launch', auth.requireAuth, launchHandler);
+
+// ==========================================
+// FHIR R4 TRANSLATION LAYER
+// ==========================================
+app.use('/fhir/R4', auth.requireAuth, fhirRouter);
 
 // ==========================================
 // PATIENT ENDPOINTS
@@ -1031,7 +1069,7 @@ app.post('/api/workflow', async (req, res) => {
       assigned_ma: req.body.assigned_ma,
       assigned_provider: req.body.assigned_provider
     });
-    res.status(201).json(result);
+    res.status(result.existing ? 200 : 201).json(result);
   } catch (error) {
     console.error('Error creating workflow:', error);
     res.status(500).json({ error: 'Failed to create workflow' });
@@ -1950,6 +1988,9 @@ app.get('*', (req, res) => {
 async function startServer() {
   // Wait for database to be ready
   await db.ready;
+
+  // Run all migrations (idempotent — safe on every start)
+  await runMigrations(db);
 
   // Initialize auth (creates users table, seeds default admin if empty)
   await auth.init(db);

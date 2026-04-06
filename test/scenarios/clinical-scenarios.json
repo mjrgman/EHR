@@ -113,7 +113,7 @@
       "labs": [],
       "transcript": "Doctor: Mr. Thompson, tell me about this chest pain.\nPatient: It started about two hours ago. It feels like someone is sitting on my chest. It goes down into my left arm.\nDoctor: Any shortness of breath?\nPatient: Yes, and I'm sweating a lot.\nDoctor: On a scale of 1 to 10?\nPatient: About an 8.\nDoctor: Blood pressure is 168 over 98, heart rate 102, oxygen saturation 94 percent, respiratory rate 22. Temperature 98.2.\nDoctor: Given your history of coronary artery disease, we need to act quickly. I'm ordering a stat troponin, EKG, chest X-ray, and basic metabolic panel. We'll give you sublingual nitroglycerin and start oxygen.",
       "expected_cds": {
-        "should_fire": ["Stage 2 Hypertension", "Tachycardia", "Differential: Chest Pain"],
+        "should_fire": ["Stage 2 Hypertension", "Tachycardia", "Differential: Chest Pain", "Hypoxia"],
         "should_not_fire": ["Bradycardia", "Fever"]
       }
     },

@@ -11,6 +11,25 @@ const Anthropic = require('@anthropic-ai/sdk');
 const AI_MODE = process.env.AI_MODE || 'mock';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 
+function normalizeTranscriptText(text = '') {
+  return text
+    .replace(/[’‘]/g, '\'')
+    .replace(/[“”]/g, '"')
+    .replace(/Â°/g, '°');
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function toMedicationDisplayName(value) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
 function getMode() {
   return ANTHROPIC_API_KEY && AI_MODE === 'api' ? 'api' : 'mock';
 }
@@ -51,52 +70,53 @@ async function callClaude(system, user, model = 'claude-haiku-4-5-20251001') {
 // ==========================================
 
 function extractVitals(transcript) {
+  const text = normalizeTranscriptText(transcript);
   const vitals = {};
 
   // Blood pressure: "142 over 88", "142/88", "BP 142/88", "blood pressure 142/88"
-  const bpMatch = transcript.match(/(?:blood\s*pressure|BP)?\s*(\d{2,3})\s*(?:over|\/)\s*(\d{2,3})/i);
+  const bpMatch = text.match(/(?:blood\s*pressure|BP)?\s*(\d{2,3})\s*(?:over|\/)\s*(\d{2,3})/i);
   if (bpMatch) {
     vitals.systolic_bp = parseInt(bpMatch[1], 10);
     vitals.diastolic_bp = parseInt(bpMatch[2], 10);
   }
 
   // Heart rate: "heart rate is 76", "pulse 76", "HR 76", "rate of 76"
-  const hrMatch = transcript.match(/(?:heart\s*rate|pulse|HR)\s*(?:is|of|:|\s)\s*(\d{2,3})/i);
+  const hrMatch = text.match(/(?:heart\s*rate|pulse|HR)\s*(?:is|of|:|\s)\s*(\d{2,3})/i);
   if (hrMatch) {
     vitals.heart_rate = parseInt(hrMatch[1], 10);
   }
 
   // Temperature: "temperature 98.6", "temp 98.6 degrees", "temp is 99.1"
-  const tempMatch = transcript.match(/(?:temperature|temp)\s*(?:is|of|:|\s)\s*(\d{2,3}(?:\.\d{1,2})?)\s*(?:degrees|°|F|fahrenheit)?/i);
+  const tempMatch = text.match(/(?:temperature|temp)\s*(?:is|of|:|\s)\s*(\d{2,3}(?:\.\d{1,2})?)\s*(?:degrees|°|F|fahrenheit)?/i);
   if (tempMatch) {
     vitals.temperature = parseFloat(tempMatch[1]);
   }
 
   // Weight: "weight is 187", "weighs 187 pounds", "187 lbs"
-  const weightMatch = transcript.match(/(?:weight|weighs)\s*(?:is|of|:|\s)\s*(\d{2,4}(?:\.\d{1,2})?)\s*(?:pounds|lbs?|kg)?/i);
+  const weightMatch = text.match(/(?:weight|weighs)\s*(?:is|of|:|\s)\s*(\d{2,4}(?:\.\d{1,2})?)\s*(?:pounds|lbs?|kg)?/i);
   if (weightMatch) {
     vitals.weight = parseFloat(weightMatch[1]);
   }
 
   // Height: "height is 5 foot 8", "5'8", "height 68 inches"
-  const heightFtMatch = transcript.match(/(?:height\s*(?:is|of|:)?\s*)?(\d)\s*(?:foot|feet|ft|')\s*(\d{1,2})\s*(?:inches|in|")?/i);
+  const heightFtMatch = text.match(/(?:height\s*(?:is|of|:)?\s*)?(\d)\s*(?:foot|feet|ft|')\s*(\d{1,2})\s*(?:inches|in|")?/i);
   if (heightFtMatch) {
     vitals.height = parseInt(heightFtMatch[1], 10) * 12 + parseInt(heightFtMatch[2], 10);
   } else {
-    const heightInMatch = transcript.match(/height\s*(?:is|of|:|\s)\s*(\d{2,3})\s*(?:inches|in)/i);
+    const heightInMatch = text.match(/height\s*(?:is|of|:|\s)\s*(\d{2,3})\s*(?:inches|in)/i);
     if (heightInMatch) {
       vitals.height = parseInt(heightInMatch[1], 10);
     }
   }
 
   // Respiratory rate: "respiratory rate 16", "RR 16", "breathing rate 16", "resp rate 16"
-  const rrMatch = transcript.match(/(?:respiratory\s*rate|resp\s*rate|RR|breathing\s*rate)\s*(?:is|of|:|\s)\s*(\d{1,2})/i);
+  const rrMatch = text.match(/(?:respiratory\s*rate|resp\s*rate|RR|breathing\s*rate)\s*(?:is|of|:|\s)\s*(\d{1,2})/i);
   if (rrMatch) {
     vitals.respiratory_rate = parseInt(rrMatch[1], 10);
   }
 
-  // SpO2: "oxygen sat 98", "SpO2 98%", "O2 sat 98", "pulse ox 98"
-  const spo2Match = transcript.match(/(?:oxygen\s*sat(?:uration)?|SpO2|O2\s*sat|pulse\s*ox(?:imetry)?)\s*(?:is|of|:|\s)\s*(\d{2,3})\s*%?/i);
+  // SpO2: "oxygen sat 98", "SpO2 98%", "O2 sat 98", "pulse ox 98", "sat's at 93"
+  const spo2Match = text.match(/(?:oxygen\s*sat(?:uration)?|SpO2|O2\s*sat|pulse\s*ox(?:imetry)?|sat(?:uration)?(?:'s)?)\s*(?:is|of|at|:|\s)\s*(\d{2,3})\s*%?/i);
   if (spo2Match) {
     vitals.spo2 = parseInt(spo2Match[1], 10);
   }
@@ -164,11 +184,94 @@ const COMMON_MEDICATIONS = {
   'acetaminophen': { doses: ['500mg', '650mg', '1000mg'], route: 'PO', freq: 'PRN', indication: 'Pain/Fever' },
   'ibuprofen': { doses: ['200mg', '400mg', '600mg', '800mg'], route: 'PO', freq: 'PRN', indication: 'Pain/Inflammation' },
   'furosemide': { doses: ['20mg', '40mg', '80mg'], route: 'PO', freq: 'daily', indication: 'Edema/CHF' },
+  'spironolactone': { doses: ['25mg', '50mg', '100mg'], route: 'PO', freq: 'daily', indication: 'Heart Failure/Hypertension' },
 };
 
+const MEDICATION_ALIASES = {
+  lasix: 'furosemide',
+  glucophage: 'metformin',
+  ozempic: 'ozempic',
+  furosemide: 'furosemide',
+  spironolactone: 'spironolactone',
+  metformin: 'metformin',
+  lisinopril: 'lisinopril',
+  amlodipine: 'amlodipine',
+  atorvastatin: 'atorvastatin',
+  rosuvastatin: 'rosuvastatin',
+  omeprazole: 'omeprazole',
+  losartan: 'losartan',
+  gabapentin: 'gabapentin',
+  levothyroxine: 'levothyroxine',
+  albuterol: 'albuterol',
+  'insulin glargine': 'insulin glargine',
+  hydrochlorothiazide: 'hydrochlorothiazide',
+  aspirin: 'aspirin',
+  warfarin: 'warfarin',
+  apixaban: 'apixaban',
+  prednisone: 'prednisone',
+  acetaminophen: 'acetaminophen',
+  ibuprofen: 'ibuprofen'
+};
+
+function normalizeMedicationDose(rawDose, rawUnit, knownMed) {
+  if (!rawDose) return knownMed?.doses?.[0] || '';
+
+  if (rawUnit) {
+    return `${rawDose}${rawUnit.toLowerCase()}`;
+  }
+
+  const inferredDose = knownMed?.doses?.find(candidate => candidate.toLowerCase().startsWith(String(rawDose).toLowerCase()));
+  if (inferredDose) {
+    return inferredDose;
+  }
+
+  return String(rawDose);
+}
+
 function extractMedications(transcript) {
+  const text = normalizeTranscriptText(transcript);
+  const lowerText = text.toLowerCase();
   const medications = [];
-  const text = transcript;
+  const seen = new Set();
+  const sortedFreqs = Object.entries(FREQUENCY_MAP).sort((a, b) => b[0].length - a[0].length);
+
+  const aliasEntries = Object.entries(MEDICATION_ALIASES).sort((a, b) => b[0].length - a[0].length);
+  for (const [alias, canonicalKey] of aliasEntries) {
+    const knownMed = COMMON_MEDICATIONS[canonicalKey];
+    const pattern = new RegExp(
+      `\\b${escapeRegex(alias)}\\b(?:\\s*(?:to|at|dose\\s+of|up\\s+to|increase\\s+to|decrease\\s+to|start(?:ed)?\\s+(?:on\\s+)?)?\\s*(\\d+(?:\\.\\d+)?))?\\s*(mg|mcg|g|ml|units?|iu)?`,
+      'ig'
+    );
+
+    let aliasMatch;
+    while ((aliasMatch = pattern.exec(text)) !== null) {
+      const name = toMedicationDisplayName(alias);
+      const contextAfter = lowerText.slice(aliasMatch.index, aliasMatch.index + 140);
+      const dose = normalizeMedicationDose(aliasMatch[1], aliasMatch[2], knownMed);
+      let route = knownMed?.route || 'PO';
+
+      for (const [keyword, routeCode] of Object.entries(ROUTE_MAP)) {
+        if (contextAfter.includes(keyword)) {
+          route = routeCode;
+          break;
+        }
+      }
+
+      let frequency = knownMed?.freq || 'daily';
+      for (const [keyword, freqCode] of sortedFreqs) {
+        if (contextAfter.includes(keyword)) {
+          frequency = freqCode;
+          break;
+        }
+      }
+
+      const dedupeKey = `${canonicalKey}|${dose}|${route}|${frequency}`;
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey);
+        medications.push({ name, dose, route, frequency, indication: knownMed?.indication || '' });
+      }
+    }
+  }
 
   const medPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|units?|IU))\b/gi;
 
@@ -186,9 +289,8 @@ function extractMedications(transcript) {
       if (afterDose.includes(keyword)) { route = routeCode; break; }
     }
 
-    const contextAfter = text.substring(match.index, match.index + 140).toLowerCase();
+    const contextAfter = lowerText.substring(match.index, match.index + 140);
     let frequency = 'daily';
-    const sortedFreqs = Object.entries(FREQUENCY_MAP).sort((a, b) => b[0].length - a[0].length);
     for (const [keyword, freqCode] of sortedFreqs) {
       if (contextAfter.includes(keyword)) { frequency = freqCode; break; }
     }
@@ -200,7 +302,11 @@ function extractMedications(transcript) {
       if (frequency === 'daily' && knownMed.freq !== 'daily') frequency = knownMed.freq;
     }
 
-    medications.push({ name, dose, route, frequency, indication: knownMed?.indication || '' });
+    const dedupeKey = `${name.toLowerCase()}|${dose}|${route}|${frequency}`;
+    if (!seen.has(dedupeKey)) {
+      seen.add(dedupeKey);
+      medications.push({ name, dose, route, frequency, indication: knownMed?.indication || '' });
+    }
   }
 
   return medications;
@@ -244,18 +350,24 @@ const DIAGNOSIS_MAP = [
   { patterns: [/urinary\s*tract\s*infection/i, /UTI/i], name: 'Urinary Tract Infection', code: 'N39.0' },
   { patterns: [/pneumonia/i], name: 'Pneumonia', code: 'J18.9' },
   { patterns: [/upper\s*respiratory/i, /URI/i, /common\s*cold/i], name: 'Upper Respiratory Infection', code: 'J06.9' },
+  { patterns: [/sinusitis/i, /acute\s*sinus\s*infection/i], name: 'Acute Sinusitis', code: 'J01.90' },
   { patterns: [/benign\s*prostatic/i, /BPH/i, /enlarged\s*prostate/i], name: 'Benign Prostatic Hyperplasia', code: 'N40.0' },
   { patterns: [/iron\s*deficiency/i], name: 'Iron Deficiency Anemia', code: 'D50.9' },
   { patterns: [/vitamin\s*D\s*deficiency/i, /low\s*vitamin\s*D/i], name: 'Vitamin D Deficiency', code: 'E55.9' },
+  { patterns: [/edema/i, /swollen\s*legs?/i, /lower\s*extremity\s*edema/i, /pitting/i], name: 'Edema', code: 'R60.9' },
+  { patterns: [/orthopnea/i], name: 'Orthopnea', code: 'R06.01' },
+  { patterns: [/dyspnea\s*on\s*exertion/i, /\bDOE\b/i], name: 'Dyspnea on Exertion', code: 'R06.09' },
+  { patterns: [/shortness\s*of\s*breath/i, /\bSOB\b/i, /winded/i], name: 'Shortness of Breath', code: 'R06.02' },
 ];
 
 function extractProblems(transcript) {
+  const text = normalizeTranscriptText(transcript);
   const problems = [];
   const seen = new Set();
 
   for (const dx of DIAGNOSIS_MAP) {
     for (const pattern of dx.patterns) {
-      if (pattern.test(transcript) && !seen.has(dx.code)) {
+      if (pattern.test(text) && !seen.has(dx.code)) {
         seen.add(dx.code);
         problems.push({ name: dx.name, code: dx.code });
         break;
