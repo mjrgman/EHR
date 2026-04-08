@@ -41,8 +41,7 @@ async function runMigrations(db) {
     await migrateSuggestionTypes(db);
     await createAppointmentsTable(db);
     await createChargesTable(db);
-    // Note: FHIR ingestion tables (fhir_ingest_jobs/items, fhir_id_map) are defined
-    // in database.js base schema and created there on every startup — no migration needed.
+    await createFhirIngestTables(db);
 
     console.log('[MIGRATIONS] All migrations completed successfully');
     return { success: true, message: 'All migrations completed' };

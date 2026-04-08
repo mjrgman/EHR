@@ -58,9 +58,17 @@ export function useCDS(encounterId, patientId, options = {}) {
 
   useEffect(() => {
     if (!encounterId || !pollInterval) return;
+    let interval;
+    const startPolling = () => { interval = setInterval(refresh, pollInterval); };
+    const stopPolling = () => { clearInterval(interval); };
+    const handleVisibility = () => {
+      if (document.hidden) stopPolling();
+      else { refresh(); startPolling(); }
+    };
     refresh();
-    intervalRef.current = setInterval(refresh, pollInterval);
-    return () => clearInterval(intervalRef.current);
+    startPolling();
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => { stopPolling(); document.removeEventListener('visibilitychange', handleVisibility); };
   }, [encounterId, pollInterval, refresh]);
 
   useEffect(() => {

@@ -1,14 +1,43 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 export default function Modal({ isOpen, onClose, title, children, size = 'md' }) {
+  const modalRef = useRef(null);
+  const previousFocusRef = useRef(null);
+
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
+      // Save previously focused element
+      previousFocusRef.current = document.activeElement;
+      // Focus first focusable element in modal
+      setTimeout(() => {
+        if (modalRef.current) {
+          const focusable = modalRef.current.querySelector(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+          );
+          if (focusable) focusable.focus();
+        }
+      }, 0);
     } else {
       document.body.style.overflow = '';
+      // Restore focus on close
+      if (previousFocusRef.current) {
+        previousFocusRef.current.focus();
+        previousFocusRef.current = null;
+      }
     }
     return () => { document.body.style.overflow = ''; };
   }, [isOpen]);
+
+  // Escape key handler
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -20,15 +49,23 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
     full: 'max-w-[95vw]',
   };
 
+  const titleId = title ? 'modal-title-' + title.replace(/\s+/g, '-').toLowerCase() : undefined;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className={`relative bg-white rounded-2xl shadow-2xl w-full ${sizes[size]} max-h-[90vh] flex flex-col`}>
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className={`relative bg-white rounded-2xl shadow-2xl w-full ${sizes[size]} max-h-[90vh] flex flex-col`}
+      >
         {title && (
           <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">{title}</h2>
-            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600">
-              ✕
+            <h2 id={titleId} className="text-lg font-semibold">{title}</h2>
+            <button onClick={onClose} aria-label="Close modal" className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600">
+              &#x2715;
             </button>
           </div>
         )}

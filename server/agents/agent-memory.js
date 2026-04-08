@@ -33,7 +33,7 @@ class AgentMemory {
   constructor(agentName, db) {
     this.agentName = agentName;
     this.db = db;
-    this.cacheSize = 1000; // Limit in-memory cache
+    // cacheSize removed — no in-memory cache implemented; all reads go to DB (L2)
   }
 
   /**
@@ -153,11 +153,14 @@ class AgentMemory {
           // Leave as string if not JSON
         }
 
-        // Update last_accessed
+        // Apply confidence decay based on time since last update (A-M5)
+        memory.confidence = this._applyDecay(memory.confidence, memory.updated_at || memory.created_at);
+
+        // Update last_accessed and decayed confidence
         const now = new Date().toISOString();
         await this.db.dbRun(
-          'UPDATE agent_memory SET last_accessed = ? WHERE id = ?',
-          [now, memory.id]
+          'UPDATE agent_memory SET last_accessed = ?, confidence = ? WHERE id = ?',
+          [now, memory.confidence, memory.id]
         );
 
         return memory;
@@ -417,6 +420,23 @@ class AgentMemory {
     }
 
     return imported;
+  }
+
+  /**
+   * Apply time-based confidence decay (A-M5).
+   * Formula: confidence * Math.pow(decayFactor, daysSinceUpdate)
+   * @param {number} confidence - Current confidence score
+   * @param {string} lastUpdated - ISO date string of last update
+   * @returns {number} Decayed confidence score
+   */
+  _applyDecay(confidence, lastUpdated) {
+    if (!lastUpdated || !confidence) return confidence || 0;
+    const lastUpdate = new Date(lastUpdated);
+    const now = new Date();
+    const msElapsed = now - lastUpdate;
+    const daysElapsed = msElapsed / CONFIDENCE_CONFIG.decayInterval;
+    if (daysElapsed <= 0) return confidence;
+    return confidence * Math.pow(CONFIDENCE_CONFIG.decayFactor, daysElapsed);
   }
 
   /**

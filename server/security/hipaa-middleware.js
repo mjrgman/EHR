@@ -82,7 +82,7 @@ const BASE_SECURITY_HEADERS = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
-  'X-XSS-Protection': '1; mode=block',
+  'X-XSS-Protection': '0',  // L1: Deprecated header; set to 0 per OWASP recommendation
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
 };
@@ -101,7 +101,8 @@ async function init(dbInstance) {
   db = dbInstance;
   
   // Clean up expired sessions every 5 minutes
-  setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
+  // L5: .unref() so the timer doesn't prevent process exit
+  setInterval(cleanupExpiredSessions, 5 * 60 * 1000).unref();
   
   console.log('[HIPAA] Middleware initialized with session management enabled');
 }
@@ -291,21 +292,41 @@ function checkRateLimit(userId, userRole) {
 /**
  * Sanitize error response - strip PHI and sensitive info
  */
+// M5: Whitelist of known safe error messages (instead of blacklisting dangerous patterns)
+const SAFE_ERROR_MESSAGES = new Set([
+  'Invalid credentials',
+  'Username and password are required',
+  'Authentication required',
+  'Invalid or expired token',
+  'Token has been revoked',
+  'Session expired',
+  'Session expired. Please log in again.',
+  'Insufficient permissions',
+  'Not authenticated',
+  'Rate limit exceeded',
+  'Resource not found',
+  'Validation failed',
+  'Missing required fields',
+  'Invalid request format',
+  'Patient not found',
+  'Encounter not found',
+  'Audit system unavailable — request cannot be processed.',
+]);
+
 function sanitizeErrorResponse(err, isDevelopment = false) {
   if (isDevelopment) {
     return { error: err.message, stack: err.stack };
   }
-  
-  // In production, never return stack traces or internal details
-  const message = err.message || 'Internal server error';
-  
-  // Prevent exposure of database structure or internal paths
-  if (message.includes('SQL') || message.includes('database') || 
-      message.includes('table') || message.includes('/')) {
-    return { error: 'An error occurred processing your request' };
+
+  // M5: In production, only return whitelisted messages.
+  // Any unrecognized error gets a generic message to prevent info leakage.
+  const message = err.message || '';
+
+  if (SAFE_ERROR_MESSAGES.has(message)) {
+    return { error: message };
   }
-  
-  return { error: message };
+
+  return { error: 'An error occurred processing your request' };
 }
 
 // SQL injection prevention: handled by parameterized queries in database.js.
@@ -339,7 +360,8 @@ function detectPHIFields(data, depth = 0, maxDepth = 5) {
       
       // Check if this key matches any PHI field
       for (const [phiKey, phiMeta] of Object.entries(PHI_FIELDS)) {
-        if (lowerKey.includes(phiKey) || phiKey.includes(lowerKey)) {
+        // L4: Exact match only — bidirectional includes() caused false positives
+        if (lowerKey === phiKey) {
           detected.push(phiMeta.label);
           break;
         }
@@ -408,7 +430,9 @@ async function logPHIAccess(auditData) {
       ]
     );
   } catch (err) {
+    // S-M8: Audit log failure must block PHI access — rethrow so callers can handle
     console.error('[HIPAA] PHI audit logging error:', err.message);
+    throw err;
   }
 }
 
@@ -448,24 +472,42 @@ function sessionTracker(req, res, next) {
       res.status(500).json({ error: 'Session validation failed' });
     });
   } else {
-    // Create new session
-    createSession(userId, userRole, ipAddress, userAgent).then(newSessionId => {
+    // S-M2: Only create a persisted session for authenticated requests.
+    // For unauthenticated requests, assign a temporary tracking ID without persisting.
+    if (req.user) {
+      // Authenticated — create a real persisted session
+      createSession(userId, userRole, ipAddress, userAgent).then(newSessionId => {
+        req.session = {
+          id: newSessionId,
+          userId,
+          userRole,
+          ipAddress,
+          userAgent,
+          startTime: Date.now(),
+          lastActivity: Date.now(),
+        };
+        res.setHeader('X-Session-Id', newSessionId);
+        res.setHeader('X-Session-Timeout-Minutes', SESSION_TIMEOUT_MINUTES);
+        next();
+      }).catch(err => {
+        console.error('[HIPAA] Session creation error:', err);
+        res.status(500).json({ error: 'Failed to create session' });
+      });
+    } else {
+      // Unauthenticated — temporary tracking ID only, no persisted session row
+      const tempId = crypto.randomBytes(16).toString('hex');
       req.session = {
-        id: newSessionId,
+        id: tempId,
         userId,
         userRole,
         ipAddress,
         userAgent,
         startTime: Date.now(),
         lastActivity: Date.now(),
+        temporary: true,
       };
-      res.setHeader('X-Session-Id', newSessionId);
-      res.setHeader('X-Session-Timeout-Minutes', SESSION_TIMEOUT_MINUTES);
       next();
-    }).catch(err => {
-      console.error('[HIPAA] Session creation error:', err);
-      res.status(500).json({ error: 'Failed to create session' });
-    });
+    }
   }
 }
 
@@ -578,6 +620,7 @@ function phiAccessLogger(req, res, next) {
     const resourceType = pathParts[2] || 'unknown';
     
     // Log to audit trail
+    // S-M8: If audit logging fails, block the PHI response (return 503)
     if (hasPhiAccess || ['READ', 'UPDATE', 'DELETE'].includes(action)) {
       logPHIAccess({
         sessionId,
@@ -595,11 +638,16 @@ function phiAccessLogger(req, res, next) {
         requestBodySummary,
         responseStatus: res.statusCode,
         durationMs,
+      }).then(() => {
+        return originalJson(data);
       }).catch(err => {
-        console.error('[HIPAA] Failed to log PHI access:', err.message);
+        console.error('[HIPAA] Failed to log PHI access — blocking response:', err.message);
+        res.status(503);
+        return originalJson({ error: 'Audit system unavailable — request cannot be processed.' });
       });
+      return; // Response will be sent by the promise chain above
     }
-    
+
     return originalJson(data);
   };
   

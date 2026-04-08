@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import api from '../api/client';
+import api, { safeLog } from '../api/client';
 
 export function usePatient(patientId) {
   const [patient, setPatient] = useState(null);
@@ -35,7 +35,7 @@ export function usePatients() {
       const data = await api.getPatients();
       setPatients(data);
     } catch (err) {
-      console.error('Failed to load patients:', err);
+      safeLog.error('Failed to load patients:', err);
     } finally {
       setLoading(false);
     }

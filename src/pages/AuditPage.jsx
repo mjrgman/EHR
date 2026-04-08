@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import Card, { CardHeader, CardBody } from '../components/common/Card';
 import Badge from '../components/common/Badge';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import api from '../api/client';
+import api, { safeLog } from '../api/client';
 
 // ==========================================
 // CONSTANTS
@@ -260,7 +260,7 @@ export default function AuditPage() {
       setTotal(logsResult.total);
       setStats(statsResult);
     } catch (err) {
-      console.error('Failed to load audit data:', err);
+      safeLog.error('Failed to load audit data:', err);
     }
     setLoading(false);
   }, [page, filters]);

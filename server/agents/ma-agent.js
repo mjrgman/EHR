@@ -14,14 +14,8 @@
  *   - Encounter Prep: Prepares rooming materials and questionnaires
  */
 
+const crypto = require('crypto');
 const { BaseAgent } = require('./base-agent');
-
-function uuidv4() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
 
 class MAAgent extends BaseAgent {
   constructor(options = {}) {
@@ -257,7 +251,7 @@ class MAAgent extends BaseAgent {
 
     return {
       status: 'scheduling_request_generated',
-      request_id: uuidv4(),
+      request_id: crypto.randomUUID(),
       patient_id,
       reason,
       urgency: urgency || 'routine',
@@ -269,7 +263,7 @@ class MAAgent extends BaseAgent {
   _createEscalation(context, escalationDetails) {
     return {
       status: 'escalation_required',
-      escalation_id: uuidv4(),
+      escalation_id: crypto.randomUUID(),
       from: 'ma_agent',
       to: 'physician_agent',
       patient_id: context.patient?.id,
@@ -322,7 +316,18 @@ class MAAgent extends BaseAgent {
             if (!conditionMet) return { passes: false, failed_condition: 'bp_controlled', reason: 'Blood pressure not controlled' };
             break;
           case 'compliant':
-            conditionMet = true;
+            // Fail-safe: require compliance data to exist; default false if unknown (A-H2)
+            if (context.compliance != null) {
+              conditionMet = !!context.compliance;
+            } else if (activeMed && activeMed.last_fill_date) {
+              // Heuristic: if we have a fill date, check it's within a reasonable window (90 days)
+              const lastFill = new Date(activeMed.last_fill_date);
+              const daysSinceLastFill = Math.floor((new Date() - lastFill) / (1000 * 60 * 60 * 24));
+              conditionMet = daysSinceLastFill <= 90;
+            } else {
+              conditionMet = false; // Unknown compliance — escalate
+            }
+            if (!conditionMet) return { passes: false, failed_condition: 'compliant', reason: 'Patient compliance not confirmed or data unavailable' };
             break;
           case 'a1c_stable':
             const a1c = labs?.find(l => l.test_name === 'Hemoglobin A1C');
@@ -339,7 +344,22 @@ class MAAgent extends BaseAgent {
   }
 
   _getMaxRefills(protocol) { return protocol.max_refills || 3; }
-  _getRemainingRefills(protocol) { return (protocol.max_refills || 3) - 1; }
+
+  /**
+   * Track actual refills dispensed per protocol and return remaining count.
+   * Uses an in-memory counter per protocol ID (A-H1).
+   */
+  _getRemainingRefills(protocol) {
+    if (!this._refillCounts) {
+      this._refillCounts = new Map();
+    }
+    const protocolId = protocol.id || 'unknown';
+    const dispensed = this._refillCounts.get(protocolId) || 0;
+    const max = protocol.max_refills || 3;
+    // Increment the dispensed count for this refill
+    this._refillCounts.set(protocolId, dispensed + 1);
+    return Math.max(0, max - (dispensed + 1));
+  }
 
   _buildVitalsChecklist(problems) {
     const checklist = [

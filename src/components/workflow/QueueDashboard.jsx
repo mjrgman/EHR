@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../../api/client';
+import api, { safeLog } from '../../api/client';
 import WorkflowTracker from './WorkflowTracker';
 
 const ROUTES = { 'scheduled': '/checkin', 'checked-in': '/checkin', 'roomed': '/ma', 'vitals-recorded': '/ma', 'provider-examining': '/encounter', 'orders-pending': '/encounter', 'documentation': '/encounter', 'signed': '/review', 'checked-out': '/checkout' };
@@ -17,7 +17,7 @@ export default function QueueDashboard() {
   }, []);
 
   async function load() {
-    try { setWorkflows(await api.getAllWorkflows()); } catch (e) { console.error(e); } finally { setLoading(false); }
+    try { setWorkflows(await api.getAllWorkflows()); } catch (e) { safeLog.error('Queue load failed:', e); } finally { setLoading(false); }
   }
 
   if (loading) return <div className="animate-pulse p-4 text-gray-400">Loading queue...</div>;

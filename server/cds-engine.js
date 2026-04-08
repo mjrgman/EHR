@@ -40,8 +40,14 @@ function evaluateVitalRules(rules, vitals, context) {
   const suggestions = [];
 
   for (const rule of rules.filter(r => r.rule_type === 'vital_alert')) {
-    const trigger = JSON.parse(rule.trigger_condition);
-    const actions = JSON.parse(rule.suggested_actions);
+    let trigger, actions;
+    try {
+      trigger = JSON.parse(rule.trigger_condition);
+      actions = JSON.parse(rule.suggested_actions);
+    } catch (err) {
+      console.warn(`[CDS] Malformed rule ${rule.id}: invalid JSON`);
+      continue;
+    }
     let fired = false;
 
     if (trigger.or) {
@@ -75,8 +81,14 @@ function evaluateLabRules(rules, labs, context) {
   const suggestions = [];
 
   for (const rule of rules.filter(r => r.rule_type === 'lab_alert')) {
-    const trigger = JSON.parse(rule.trigger_condition);
-    const actions = JSON.parse(rule.suggested_actions);
+    let trigger, actions;
+    try {
+      trigger = JSON.parse(rule.trigger_condition);
+      actions = JSON.parse(rule.suggested_actions);
+    } catch (err) {
+      console.warn(`[CDS] Malformed rule ${rule.id}: invalid JSON`);
+      continue;
+    }
 
     const labResult = labs.find(l => l.test_name === trigger.test_name);
     if (!labResult) continue;
@@ -110,8 +122,14 @@ function evaluateDrugInteractionRules(rules, medications, allergies, context) {
 
   // Drug-Allergy checks
   for (const rule of rules.filter(r => r.rule_type === 'drug_allergy')) {
-    const trigger = JSON.parse(rule.trigger_condition);
-    const actions = JSON.parse(rule.suggested_actions);
+    let trigger, actions;
+    try {
+      trigger = JSON.parse(rule.trigger_condition);
+      actions = JSON.parse(rule.suggested_actions);
+    } catch (err) {
+      console.warn(`[CDS] Malformed rule ${rule.id}: invalid JSON`);
+      continue;
+    }
 
     const hasAllergy = allergies.some(a => a.allergen.toLowerCase() === trigger.allergen.toLowerCase());
     if (!hasAllergy) continue;
@@ -157,8 +175,14 @@ function evaluateDrugInteractionRules(rules, medications, allergies, context) {
 
   // Drug-Interaction checks
   for (const rule of rules.filter(r => r.rule_type === 'drug_interaction')) {
-    const trigger = JSON.parse(rule.trigger_condition);
-    const actions = JSON.parse(rule.suggested_actions);
+    let trigger, actions;
+    try {
+      trigger = JSON.parse(rule.trigger_condition);
+      actions = JSON.parse(rule.suggested_actions);
+    } catch (err) {
+      console.warn(`[CDS] Malformed rule ${rule.id}: invalid JSON`);
+      continue;
+    }
 
     let onDrug = false;
     if (trigger.drug) {
@@ -201,8 +225,14 @@ function evaluateDifferentialRules(rules, chiefComplaint, transcript, context) {
   const suggestions = [];
 
   for (const rule of rules.filter(r => r.rule_type === 'differential')) {
-    const trigger = JSON.parse(rule.trigger_condition);
-    const actions = JSON.parse(rule.suggested_actions);
+    let trigger, actions;
+    try {
+      trigger = JSON.parse(rule.trigger_condition);
+      actions = JSON.parse(rule.suggested_actions);
+    } catch (err) {
+      console.warn(`[CDS] Malformed rule ${rule.id}: invalid JSON`);
+      continue;
+    }
 
     const matched = trigger.symptom_keywords && trigger.symptom_keywords.some(kw => text.includes(kw.toLowerCase()));
     if (!matched) continue;
@@ -235,8 +265,14 @@ function evaluatePrescribingAdvisoryRules(rules, medications, chiefComplaint, tr
   const suggestions = [];
 
   for (const rule of rules.filter(r => r.rule_type === 'prescribing_advisory')) {
-    const trigger = JSON.parse(rule.trigger_condition);
-    const actions = JSON.parse(rule.suggested_actions);
+    let trigger, actions;
+    try {
+      trigger = JSON.parse(rule.trigger_condition);
+      actions = JSON.parse(rule.suggested_actions);
+    } catch (err) {
+      console.warn(`[CDS] Malformed rule ${rule.id}: invalid JSON`);
+      continue;
+    }
 
     // Check if chief complaint/transcript matches the target keywords
     if (trigger.chief_complaint_keywords) {
@@ -272,8 +308,14 @@ function evaluateScreeningRules(rules, problems, labs, context) {
   const suggestions = [];
 
   for (const rule of rules.filter(r => r.rule_type === 'screening')) {
-    const trigger = JSON.parse(rule.trigger_condition);
-    const actions = JSON.parse(rule.suggested_actions);
+    let trigger, actions;
+    try {
+      trigger = JSON.parse(rule.trigger_condition);
+      actions = JSON.parse(rule.suggested_actions);
+    } catch (err) {
+      console.warn(`[CDS] Malformed rule ${rule.id}: invalid JSON`);
+      continue;
+    }
 
     // Check if patient has the required condition
     if (!problems.some(p => p.icd10_code && p.icd10_code.startsWith(trigger.requires_problem_prefix))) continue;
@@ -360,7 +402,11 @@ function evaluateHeartScoreProtocol(context) {
 
   // --- E: ECG ---
   // Cannot evaluate without EKG data in current model; default 1 (non-specific changes pending)
-  components.ecg = 1;
+  components.ecg = 1; // Default: non-specific repolarization
+  const ecgReview = {
+    ecg_needs_review: true,
+    ecg_note: 'ECG component defaulted to 1 (non-specific). Manual ECG review required for accurate HEART score.'
+  };
 
   // --- A: Age ---
   let ageScore = 0;
@@ -435,6 +481,7 @@ function evaluateHeartScoreProtocol(context) {
       protocol: 'HEART_SCORE',
       score: totalScore,
       components,
+      ...ecgReview,
       actions: totalScore >= 4 ? [
         { type: 'order_lab', description: 'Serial Troponin (3-hour)', payload: { test_name: 'Troponin I', cpt_code: '84484' } },
         { type: 'order_lab', description: 'Serial Troponin (6-hour)', payload: { test_name: 'Troponin I', cpt_code: '84484' } }
@@ -473,9 +520,15 @@ async function evaluatePatientContext(encounterId, patientId, context) {
   // Sort by priority (lower number = higher priority)
   unique.sort((a, b) => a.priority - b.priority);
 
-  // Persist to database
+  // Persist to database (with deduplication against existing pending suggestions)
   const saved = [];
   for (const s of unique) {
+    const existing = await db.dbGet(
+      'SELECT id FROM cds_suggestions WHERE encounter_id = ? AND title = ? AND status = ?',
+      [encounterId, s.title, 'pending']
+    );
+    if (existing) continue; // Skip duplicate
+
     const result = await db.createSuggestion({
       encounter_id: encounterId,
       patient_id: patientId,

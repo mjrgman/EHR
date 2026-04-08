@@ -469,7 +469,10 @@ function authorize(roleName, resourceType, action) {
     case 'update':
       return canWrite(roleName, resourceType);
     case 'delete':
-      // Only physicians and admins can delete
+      // L6: Admin is in the role allowlist below but has canWrite=false for all clinical
+      // resources, so the canWrite() check effectively blocks admin deletes on patient data.
+      // This is intentional: admin can only delete resource types where canWrite is true
+      // (currently none), preserving the principle that admins manage the system, not clinical data.
       return ['physician', 'nurse_practitioner', 'admin'].includes(roleName) &&
              canWrite(roleName, resourceType);
     case 'sign':

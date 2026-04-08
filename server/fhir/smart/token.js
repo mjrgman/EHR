@@ -162,20 +162,15 @@ async function tokenHandler(req, res) {
   const grantedScopes = resolveScopes(body.scope, user.role);
   const scopeString = grantedScopes.join(' ');
 
-  // Issue JWT with scope claim embedded
-  const jwt = require('jsonwebtoken');
+  // Issue JWT with scope claim embedded (uses auth.signToken wrapper — JWT_SECRET is not exported)
   const expiresIn = 3600; // 1 hour
-  const token = jwt.sign(
-    {
-      sub: user.id,
-      username: user.username,
-      role: user.role,
-      fullName: user.full_name,
-      scope: scopeString,
-    },
-    auth.JWT_SECRET,
-    { expiresIn }
-  );
+  const token = auth.signToken({
+    sub: user.id,
+    username: user.username,
+    role: user.role,
+    fullName: user.full_name,
+    scope: scopeString,
+  }, { expiresIn });
 
   // Update last_login
   await db.dbRun('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);

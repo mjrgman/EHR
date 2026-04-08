@@ -62,12 +62,14 @@ class PhoneTriageAgent extends BaseAgent {
 
   /**
    * Process an incoming call.
+   * Call info is extracted from context.callInfo (A-H5: matches base class 2-param contract).
    *
-   * @param {PatientContext} context
-   * @param {Object} callInfo - { reason, symptoms[], callerType, patientId, transcript }
+   * @param {PatientContext} context - Must include context.callInfo for triage data
+   * @param {Object} agentResults - Results from previously-run agents
    * @returns {Promise<TriageResult>}
    */
-  async process(context, agentResults = {}, callInfo = {}) {
+  async process(context, agentResults = {}) {
+    const callInfo = context.callInfo || {};
     const callId = callInfo.callId || `call_${Date.now()}`;
     const timestamp = new Date().toISOString();
     const reason = callInfo.reason || 'General inquiry';

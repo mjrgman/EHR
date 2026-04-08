@@ -3,14 +3,8 @@
  * The brain of the system. The provider's personal AI agent.
  */
 
-const { BaseAgent } = require('./base-agent');
-
-function uuidv4() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
+const crypto = require('crypto');
+const { BaseAgent, ACTION_TYPE } = require('./base-agent');
 
 class PhysicianAgent extends BaseAgent {
   constructor(options = {}) {
@@ -69,10 +63,24 @@ class PhysicianAgent extends BaseAgent {
 
     if (autoResponse) {
       const directive = this._generateDirective(escalation, autoResponse, context);
-      
+
+      // Audit trail for auto-response (A-C4)
+      this.audit(ACTION_TYPE.AUTO_EXECUTE, {
+        escalation_id: escalation.escalation_id,
+        escalation_type: escalation.type,
+        auto_response_template: autoResponse.template_id,
+        instructions: directive.instructions,
+        patient_id: context.patient?.id,
+        // PRODUCTION NOTE: Tier 3 decisions should require explicit physician confirmation.
+        // This auto-response is based on pre-approved protocol templates only.
+        auto_approved: true,
+        warning: 'Auto-approved via protocol template. Physician confirmation recommended for Tier 3 decisions.'
+      }, context);
+
       return {
         status: 'escalation_handled',
         decision: 'auto_response_generated',
+        auto_approved: true, // Flag for downstream consumers (A-C4)
         escalation_id: escalation.escalation_id,
         directive_id: directive.directive_id,
         instructions: directive.instructions,
@@ -84,6 +92,7 @@ class PhysicianAgent extends BaseAgent {
     return {
       status: 'escalation_received',
       decision: 'requires_physician_review',
+      auto_approved: false,
       escalation_id: escalation.escalation_id,
       escalation_type: escalation.type,
       patient_name: escalation.patient_name,
@@ -95,7 +104,7 @@ class PhysicianAgent extends BaseAgent {
 
   _generateDirective(escalation, responseTemplate, context) {
     const directive = {
-      directive_id: uuidv4(),
+      directive_id: crypto.randomUUID(),
       in_response_to: escalation.escalation_id,
       from: 'physician_agent',
       to: 'ma_agent',
@@ -229,14 +238,49 @@ ${signature}
   async updateProtocols(context, updatePayload) {
     const { action, protocol } = updatePayload;
 
+    // Schema validation (A-M3): reject invalid or suspicious protocol objects
+    const REQUIRED_FIELDS = ['name', 'type'];
+    const ALLOWED_FIELDS = new Set([
+      'id', 'name', 'type', 'conditions', 'medication', 'medication_class',
+      'action', 'max_refills', 'requires_physician', 'auto_approve', 'created_date'
+    ]);
+
+    if (protocol) {
+      for (const field of REQUIRED_FIELDS) {
+        if (!protocol[field]) {
+          return { status: 'error', message: `Protocol missing required field: ${field}` };
+        }
+      }
+      const unexpectedFields = Object.keys(protocol).filter(k => !ALLOWED_FIELDS.has(k));
+      if (unexpectedFields.length > 0) {
+        return { status: 'error', message: `Protocol contains unexpected fields: ${unexpectedFields.join(', ')}` };
+      }
+      // Reject suspicious values (e.g., overly long strings or embedded code patterns)
+      for (const [key, val] of Object.entries(protocol)) {
+        if (typeof val === 'string' && val.length > 500) {
+          return { status: 'error', message: `Protocol field '${key}' exceeds max length (500)` };
+        }
+      }
+    }
+
     switch (action) {
       case 'add':
         this.protocols.push({ ...protocol, created_date: new Date().toISOString() });
+        this.audit(ACTION_TYPE.RECOMMENDATION, {
+          action: 'protocol_added',
+          protocol_id: protocol.id,
+          protocol_name: protocol.name
+        }, context);
         return { status: 'protocol_added', protocol_id: protocol.id };
       case 'update':
         const index = this.protocols.findIndex(p => p.id === protocol.id);
         if (index >= 0) {
           this.protocols[index] = { ...this.protocols[index], ...protocol };
+          this.audit(ACTION_TYPE.RECOMMENDATION, {
+            action: 'protocol_updated',
+            protocol_id: protocol.id,
+            protocol_name: protocol.name
+          }, context);
           return { status: 'protocol_updated', protocol_id: protocol.id };
         }
         return { status: 'error', message: 'Protocol not found' };

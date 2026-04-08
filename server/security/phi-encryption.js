@@ -14,34 +14,52 @@ const crypto = require('crypto');
 // CONFIGURATION & VALIDATION
 // ==========================================
 
-// Derive encryption key from environment variable using PBKDF2
-function deriveKey() {
-  const keyMaterial = process.env.PHI_ENCRYPTION_KEY;
+// L2: Module-scoped key cache — avoids running PBKDF2 (100k iterations) on every call.
+// Invalidated on key rotation or when key material changes.
+let cachedKey = null;
+let cachedKeyMaterial = null;
 
-  if (!keyMaterial) {
+/**
+ * Derive encryption key from key material using PBKDF2.
+ * S-H3: Accepts optional keyMaterial parameter instead of always reading from env.
+ * L2: Caches the derived key for the current key material.
+ *
+ * @param {string} [keyMaterial] - Key material to derive from (defaults to process.env.PHI_ENCRYPTION_KEY)
+ * @param {Buffer} [salt] - Optional salt (used for new-format decryption); if omitted, uses deterministic salt for backward compat
+ * @returns {Buffer} 256-bit derived key
+ */
+function deriveKey(keyMaterial = null, salt = null) {
+  const material = keyMaterial || process.env.PHI_ENCRYPTION_KEY;
+
+  if (!material) {
     throw new Error(
       'PHI_ENCRYPTION_KEY environment variable is required for encryption. ' +
       'Generate with: node -e "console.log(crypto.randomBytes(32).toString(\'hex\'))"'
     );
   }
 
-  if (keyMaterial.length < 32) {
+  if (material.length < 32) {
     throw new Error('PHI_ENCRYPTION_KEY must be at least 32 characters (16 bytes hex)');
   }
 
-  // PBKDF2: 100k iterations, SHA-256
-  // Salt is derived from the key material itself (deterministic per deployment).
-  // This ensures the same PHI_ENCRYPTION_KEY always produces the same derived key
-  // while avoiding a hardcoded salt that would be shared across all deployments.
-  const salt = crypto.createHash('sha256').update(keyMaterial + ':agentic-ehr-phi-salt').digest();
+  // If a custom salt is provided (new format), always derive fresh — no caching
+  if (salt) {
+    return crypto.pbkdf2Sync(material, salt, 100000, 32, 'sha256');
+  }
 
-  return crypto.pbkdf2Sync(
-    keyMaterial,
-    salt,
-    100000, // iterations
-    32,     // 256-bit key
-    'sha256'
-  );
+  // L2: Return cached key if material hasn't changed (deterministic-salt path)
+  if (cachedKey && cachedKeyMaterial === material) {
+    return cachedKey;
+  }
+
+  // PBKDF2: 100k iterations, SHA-256
+  // Deterministic salt for backward compatibility with old-format data
+  const deterministicSalt = crypto.createHash('sha256').update(material + ':agentic-ehr-phi-salt').digest();
+
+  cachedKey = crypto.pbkdf2Sync(material, deterministicSalt, 100000, 32, 'sha256');
+  cachedKeyMaterial = material;
+
+  return cachedKey;
 }
 
 // Pepper for hashPHI function (should be set via environment or derived from key)
@@ -66,7 +84,9 @@ function encrypt(plaintext) {
     return null;
   }
 
-  const key = deriveKey();
+  // S-H2: Use random salt for PBKDF2 (stored alongside encrypted data)
+  const salt = crypto.randomBytes(16);
+  const key = deriveKey(null, salt);
   const iv = crypto.randomBytes(16); // 128-bit IV
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
 
@@ -76,6 +96,7 @@ function encrypt(plaintext) {
   const authTag = cipher.getAuthTag();
 
   return JSON.stringify({
+    salt: salt.toString('hex'),
     iv: iv.toString('hex'),
     ciphertext: encrypted,
     authTag: authTag.toString('hex'),
@@ -90,14 +111,23 @@ function encrypt(plaintext) {
  * @returns {string} Decrypted plaintext
  * @throws {Error} If decryption fails (tampered data)
  */
-function decrypt(encryptedJson) {
+function decrypt(encryptedJson, keyMaterial = null) {
   if (!encryptedJson) {
     return null;
   }
 
   try {
     const encrypted = JSON.parse(encryptedJson);
-    const key = deriveKey();
+
+    // S-H2: Backward-compatible decryption — if 'salt' field is present, use random-salt
+    // derivation (new format); otherwise fall back to deterministic salt (old format).
+    let key;
+    if (encrypted.salt) {
+      const salt = Buffer.from(encrypted.salt, 'hex');
+      key = deriveKey(keyMaterial, salt);
+    } else {
+      key = deriveKey(keyMaterial);
+    }
 
     const iv = Buffer.from(encrypted.iv, 'hex');
     const authTag = Buffer.from(encrypted.authTag, 'hex');
@@ -279,38 +309,26 @@ function decryptRecords(records, fieldNames = null) {
 // ==========================================
 
 /**
- * Re-encrypt data with new key material
- * Used during key rotation scenarios
+ * Re-encrypt data with new key material.
+ * S-H3: Passes old key directly to decrypt via parameter -- no process.env swapping,
+ * eliminating the race condition entirely.
  *
  * @param {string} oldEncrypted - Data encrypted with old key
  * @param {string} oldKeyMaterial - Previous PHI_ENCRYPTION_KEY value
  * @returns {string} Data encrypted with current key
  */
-// Lock to prevent concurrent key rotation (avoids race condition on process.env)
-let rotationInProgress = false;
-
 function reencryptWithNewKey(oldEncrypted, oldKeyMaterial) {
-  if (rotationInProgress) {
-    throw new Error('Key rotation already in progress — concurrent rotation not allowed');
-  }
-
-  rotationInProgress = true;
-  const currentKey = process.env.PHI_ENCRYPTION_KEY;
-
   try {
-    // Decrypt with old key
-    process.env.PHI_ENCRYPTION_KEY = oldKeyMaterial;
-    const plaintext = decrypt(oldEncrypted);
+    // Decrypt with old key (passed directly, no env mutation)
+    const plaintext = decrypt(oldEncrypted, oldKeyMaterial);
 
-    // Re-encrypt with current key
-    process.env.PHI_ENCRYPTION_KEY = currentKey;
-    const result = encrypt(plaintext);
+    // L2: Invalidate cached key since we're rotating
+    cachedKey = null;
+    cachedKeyMaterial = null;
 
-    rotationInProgress = false;
-    return result;
+    // Re-encrypt with current key (reads from process.env.PHI_ENCRYPTION_KEY)
+    return encrypt(plaintext);
   } catch (err) {
-    process.env.PHI_ENCRYPTION_KEY = currentKey;
-    rotationInProgress = false;
     throw new Error(`Key rotation failed: ${err.message}`);
   }
 }

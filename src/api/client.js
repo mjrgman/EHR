@@ -1,5 +1,16 @@
 const BASE = '/api';
 
+export const safeLog = {
+  error: (msg, ...args) => {
+    const safeArgs = args.map(a => {
+      if (a instanceof Error) return a.message;
+      if (typeof a === 'object') return '[object]';
+      return a;
+    });
+    console.error(msg, ...safeArgs);
+  }
+};
+
 // Audit session tracking
 let auditSessionId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('audit_session_id') : null;
 let auditUser = null;
@@ -10,16 +21,30 @@ export function setAuditContext(providerName, role) {
   auditRole = role;
 }
 
-async function request(url, options = {}) {
+async function request(url, options = {}, _retryCount = 0) {
+  if (!navigator.onLine) {
+    throw new Error('Network connection lost. Please check your connection and try again.');
+  }
+
   const auditHeaders = {};
   if (auditSessionId) auditHeaders['X-Audit-Session-Id'] = auditSessionId;
   if (auditUser) auditHeaders['X-Audit-User'] = auditUser;
   if (auditRole) auditHeaders['X-Audit-Role'] = auditRole;
 
-  const res = await fetch(`${BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json', ...auditHeaders, ...options.headers },
-    ...options
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}${url}`, {
+      headers: { 'Content-Type': 'application/json', ...auditHeaders, ...options.headers },
+      ...options
+    });
+  } catch (networkErr) {
+    // Retry once on network error with 1-second delay
+    if (_retryCount < 1) {
+      await new Promise(r => setTimeout(r, 1000));
+      return request(url, options, _retryCount + 1);
+    }
+    throw networkErr;
+  }
 
   // Capture session ID from server response
   const responseSessionId = res.headers.get('X-Audit-Session-Id');
@@ -28,6 +53,11 @@ async function request(url, options = {}) {
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.setItem('audit_session_id', responseSessionId);
     }
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    window.location.href = '/login';
+    throw new Error('Session expired. Please log in again.');
   }
 
   if (!res.ok) {
@@ -91,6 +121,16 @@ export const api = {
   updateCharge: (encounterId, data) => request(`/encounters/${encounterId}/charge`, { method: 'POST', body: JSON.stringify(data) }),
   finalizeCheckout: (encounterId, data) => request(`/encounters/${encounterId}/checkout`, { method: 'POST', body: JSON.stringify(data) }),
   getBillingCharges: (params) => { const q = new URLSearchParams(params).toString(); return request(`/billing/charges${q ? '?' + q : ''}`); },
+
+  // Patient sub-resources
+  addProblem: (patientId, data) => request(`/patients/${patientId}/problems`, { method: 'POST', body: JSON.stringify(data) }),
+  addMedication: (patientId, data) => request(`/patients/${patientId}/medications`, { method: 'POST', body: JSON.stringify(data) }),
+  addAllergy: (patientId, data) => request(`/patients/${patientId}/allergies`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // Agent endpoints
+  runAgentPipeline: (data) => request('/agents/run', { method: 'POST', body: JSON.stringify(data) }),
+  getAgentBriefing: (patientId, encounterId) => request(`/agents/briefing/${patientId}${encounterId ? '?encounter_id=' + encounterId : ''}`),
+  runMAAgent: (data) => request('/agents/ma', { method: 'POST', body: JSON.stringify(data) }),
 };
 
 export default api;

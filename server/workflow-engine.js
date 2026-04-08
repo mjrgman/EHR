@@ -70,7 +70,7 @@ function getValidTransitions(currentState) {
   return config.next;
 }
 
-async function transitionState(encounterId, targetState, metadata = {}) {
+async function transitionState(encounterId, targetState, metadata = {}, userRole = null) {
   const wf = await getCurrentState(encounterId);
   const config = STATES[wf.current_state];
 
@@ -78,10 +78,27 @@ async function transitionState(encounterId, targetState, metadata = {}) {
     throw new Error(`Invalid transition: ${wf.current_state} -> ${targetState}. Valid: ${config ? config.next.join(', ') : 'none'}`);
   }
 
+  // Enforce role requirement for the target state (physician can override any transition)
+  const targetConfig = STATES[targetState];
+  if (userRole && userRole !== 'physician' && targetConfig && targetConfig.role) {
+    // Map role names: 'provider' in STATES matches physician/nurse_practitioner
+    const requiredRole = targetConfig.role;
+    const roleMatches =
+      requiredRole === 'provider'
+        ? ['physician', 'nurse_practitioner', 'provider'].includes(userRole)
+        : requiredRole === 'reception'
+          ? ['front_desk', 'reception', 'admin'].includes(userRole)
+          : requiredRole === 'ma'
+            ? ['ma', 'medical_assistant'].includes(userRole)
+            : userRole === requiredRole;
+    if (!roleMatches) {
+      throw new Error(`Role '${userRole}' cannot transition to '${targetState}'. Required role: '${requiredRole}'.`);
+    }
+  }
+
   const updates = { current_state: targetState };
 
   // Set the timestamp for the state we're entering
-  const targetConfig = STATES[targetState];
   if (targetConfig && targetConfig.timeField) {
     updates[targetConfig.timeField] = new Date().toISOString();
   }

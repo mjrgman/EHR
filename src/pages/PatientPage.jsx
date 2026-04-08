@@ -47,7 +47,7 @@ function formatDate(dateStr) {
 
 export default function PatientPage() {
   const { patientId } = useParams();
-  const pid = parseInt(patientId);
+  const pid = parseInt(patientId, 10);
   const navigate = useNavigate();
   const toast = useToast();
   const { patient, loading, error, refresh } = usePatient(pid);
@@ -112,11 +112,7 @@ export default function PatientPage() {
     }
     setSubmitting(true);
     try {
-      await fetch(`/api/patients/${pid}/problems`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(problemForm),
-      }).then((r) => { if (!r.ok) throw new Error('Failed to add problem'); return r.json(); });
+      await api.addProblem(pid, problemForm);
       toast.success('Problem added.');
       setProblemModalOpen(false);
       setProblemForm({ problem_name: '', icd10_code: '', status: 'active' });
@@ -137,11 +133,7 @@ export default function PatientPage() {
     }
     setSubmitting(true);
     try {
-      await fetch(`/api/patients/${pid}/medications`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(medForm),
-      }).then((r) => { if (!r.ok) throw new Error('Failed to add medication'); return r.json(); });
+      await api.addMedication(pid, medForm);
       toast.success('Medication added.');
       setMedModalOpen(false);
       setMedForm({ medication_name: '', dose: '', route: 'oral', frequency: '', status: 'active' });
@@ -162,11 +154,7 @@ export default function PatientPage() {
     }
     setSubmitting(true);
     try {
-      await fetch(`/api/patients/${pid}/allergies`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(allergyForm),
-      }).then((r) => { if (!r.ok) throw new Error('Failed to add allergy'); return r.json(); });
+      await api.addAllergy(pid, allergyForm);
       toast.success('Allergy added.');
       setAllergyModalOpen(false);
       setAllergyForm({ allergen: '', reaction: '', severity: 'moderate' });

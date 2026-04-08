@@ -51,13 +51,14 @@ class FrontDeskAgent extends BaseAgent {
 
   /**
    * Main process method — routes to scheduling or briefing depending on context.
+   * Request info is extracted from context.requestInfo (A-H5: matches base class 2-param contract).
    *
-   * @param {PatientContext} context
-   * @param {Object} agentResults
-   * @param {Object} requestInfo - { action, appointmentType, dateRange, urgency, etc. }
+   * @param {PatientContext} context - Must include context.requestInfo for front desk actions
+   * @param {Object} agentResults - Results from previously-run agents
    * @returns {Promise<Object>}
    */
-  async process(context, agentResults = {}, requestInfo = {}) {
+  async process(context, agentResults = {}) {
+    const requestInfo = context.requestInfo || {};
     // Support action from either requestInfo (direct call) or context.frontDeskRequest (pipeline)
     const fdReq = context.frontDeskRequest || {};
     const action = requestInfo.action || fdReq.action || 'find_slots';
@@ -249,7 +250,7 @@ class FrontDeskAgent extends BaseAgent {
       name: `${patient.first_name} ${patient.last_name}`,
       mrn: patient.mrn,
       dob: patient.dob,
-      age: this._calculateAge(patient.dob),
+      age: this._age(patient.dob),
       sex: patient.sex,
       insurance: patient.insurance_carrier,
       insuranceId: patient.insurance_id,
@@ -405,7 +406,7 @@ class FrontDeskAgent extends BaseAgent {
    * Assess preventive care status.
    */
   _assessPreventiveCareStatus(patient, labs, referrals) {
-    const age = this._calculateAge(patient.dob);
+    const age = this._age(patient.dob);
     const status = [];
 
     // Colonoscopy (age 45+)
@@ -690,18 +691,7 @@ Front Desk Team`;
     return slotsNeeded.slots.find(s => s.slotId === slotId);
   }
 
-  /**
-   * Helper: Calculate age from DOB.
-   */
-  _calculateAge(dob) {
-    if (!dob) return null;
-    const birth = new Date(dob);
-    const now = new Date();
-    let age = now.getFullYear() - birth.getFullYear();
-    const m = now.getMonth() - birth.getMonth();
-    if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
-    return age;
-  }
+  // _calculateAge replaced by _age() inherited from BaseAgent (L1)
 }
 
 module.exports = { FrontDeskAgent };

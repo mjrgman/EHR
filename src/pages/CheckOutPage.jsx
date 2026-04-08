@@ -35,7 +35,7 @@ function formatDate(dateStr) {
 
 export default function CheckOutPage() {
   const { encounterId } = useParams();
-  const eid = parseInt(encounterId);
+  const eid = parseInt(encounterId, 10);
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -146,8 +146,6 @@ export default function CheckOutPage() {
       toast.success('Patient checked out successfully.');
     } catch (err) {
       toast.error('Checkout failed: ' + err.message);
-      // Show complete screen anyway since partial transition may have succeeded
-      setCheckedOut(true);
     } finally {
       setCheckingOut(false);
     }

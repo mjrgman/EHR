@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api from '../api/client';
+import api, { safeLog } from '../api/client';
 import { usePatient } from '../hooks/usePatient';
 import { useWorkflow } from '../hooks/useWorkflow';
 import { useEncounter } from '../hooks/useEncounter';
@@ -270,7 +270,7 @@ function ReferralModalForm({ onSubmit, onClose }) {
 // ============================================================
 export default function EncounterPage() {
   const { encounterId } = useParams();
-  const eid = parseInt(encounterId);
+  const eid = parseInt(encounterId, 10);
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -354,7 +354,7 @@ export default function EncounterPage() {
         setAutoSaveStatus('saved');
         setTimeout(() => setAutoSaveStatus(''), 2000);
       } catch (e) {
-        console.error('Auto-save failed:', e);
+        safeLog.error('Auto-save failed:', e);
         setAutoSaveStatus('');
       }
     }, 2000);
@@ -363,6 +363,22 @@ export default function EncounterPage() {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
   }, [transcript, encounter, eid]);
+
+  // --- Unsaved work protection ---
+  const hasUnsavedChanges = autoSaveStatus === 'saving' ||
+    (encounter && transcript !== (encounter.transcript || '')) ||
+    (encounter && soapNote !== (encounter.soap_note || ''));
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsavedChanges]);
 
   // --- Handlers ---
 
@@ -390,7 +406,7 @@ export default function EncounterPage() {
       await refreshCDS();
       toast.success('Clinical data extracted');
     } catch (e) {
-      console.error('Extract failed:', e);
+      safeLog.error('Extract failed:', e);
       toast.error('Data extraction failed');
     } finally {
       setExtracting(false);
@@ -411,7 +427,7 @@ export default function EncounterPage() {
         toast.success('SOAP note generated');
       }
     } catch (e) {
-      console.error('Note generation failed:', e);
+      safeLog.error('Note generation failed:', e);
       toast.error('Note generation failed');
     } finally {
       setGenerating(false);

@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -11,6 +12,7 @@ const audit = require('./audit-logger');
 const logger = require('./utils/logger');
 const { validate, schemas } = require('./utils/validate');
 const auth = require('./security/auth');
+const rbac = require('./security/rbac');
 const { runMigrations } = require('./database-migrations');
 const billing = require('./billing-engine');
 const fhirRouter = require('./fhir/router');
@@ -48,7 +50,6 @@ process.on('uncaughtException', (error) => {
 
 // Helmet with nonce-based CSP (replaces contentSecurityPolicy: false)
 app.use((req, res, next) => {
-  const crypto = require('crypto');
   res.locals.cspNonce = crypto.randomBytes(16).toString('base64');
   next();
 });
@@ -79,7 +80,7 @@ app.use(cors({
     // Allow requests with no origin (server-to-server, curl, mobile apps)
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    if (process.env.NODE_ENV === 'development') return callback(null, true);
     callback(new Error(`CORS: origin ${origin} not allowed`));
   },
   credentials: true,
@@ -150,6 +151,24 @@ app.get('/smart/launch', auth.requireAuth, launchHandler);
 app.use('/fhir/R4', auth.requireAuth, fhirRouter);
 
 // ==========================================
+// AUTHENTICATION & RBAC FOR ALL API ROUTES
+// ==========================================
+
+// Require authentication on all API routes
+app.use('/api', auth.requireAuth);
+
+// RBAC: resource-level access control per route group
+app.use('/api/patients', rbac.requireResourceAccess('patients'));
+app.use('/api/encounters', rbac.requireResourceAccess('encounters'));
+app.use('/api/prescriptions', rbac.requireResourceAccess('medications'));
+app.use('/api/medications', rbac.requireResourceAccess('medications'));
+app.use('/api/audit', rbac.requireRole('admin', 'physician'));
+app.use('/api/billing', rbac.requireResourceAccess('billing'));
+app.use('/api/charges', rbac.requireResourceAccess('billing'));
+app.use('/api/appointments', rbac.requireResourceAccess('encounters'));
+app.use('/api/scheduling', rbac.requireResourceAccess('encounters'));
+
+// ==========================================
 // PATIENT ENDPOINTS
 // ==========================================
 
@@ -204,11 +223,6 @@ app.get('/api/patients/:id', async (req, res) => {
 // Create new patient
 app.post('/api/patients', validate(schemas.createPatient), async (req, res) => {
   try {
-    const err = requireFields(req.body, ['first_name', 'last_name', 'dob']);
-    if (err) {
-      return res.status(400).json({ error: err });
-    }
-
     const patientData = {
       first_name: sanitizeString(req.body.first_name, 100),
       middle_name: sanitizeString(req.body.middle_name, 100),
@@ -451,6 +465,13 @@ app.patch('/api/encounters/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid encounter ID' });
     }
 
+    if (req.body.status !== undefined) {
+      const allowedStatuses = ['in-progress', 'completed', 'signed'];
+      if (!allowedStatuses.includes(req.body.status)) {
+        return res.status(400).json({ error: `Invalid status. Must be one of: ${allowedStatuses.join(', ')}` });
+      }
+    }
+
     const updates = {};
     if (req.body.transcript !== undefined) updates.transcript = sanitizeString(req.body.transcript, 50000);
     if (req.body.soap_note !== undefined) updates.soap_note = sanitizeString(req.body.soap_note, 50000);
@@ -493,7 +514,11 @@ app.post('/api/ai/extract-data', async (req, res) => {
     }
 
     const patient = patient_id ? await db.getPatientById(validateId(patient_id)) : null;
-    const extracted = await aiClient.extractClinicalData(sanitizeString(transcript, 20000), patient);
+    const result = await aiClient.extractClinicalData(sanitizeString(transcript, 20000), patient);
+
+    // Unwrap the result (extractClinicalData returns { extracted, extraction_summary })
+    const extracted = result.extracted || result;
+    const extractionSummary = result.extraction_summary || null;
 
     // If encounter_id is provided, run CDS after extraction
     let cdsSuggestions = [];
@@ -517,6 +542,7 @@ app.post('/api/ai/extract-data', async (req, res) => {
     res.json({
       mode: aiClient.getMode(),
       extracted,
+      extraction_summary: extractionSummary,
       cds_suggestions: cdsSuggestions
     });
   } catch (error) {
@@ -606,12 +632,16 @@ app.post('/api/prescriptions', async (req, res) => {
       });
     }
 
-    // Record provider learning
+    // Record provider learning — associate only with the matching indication
     try {
       const encounter = rxData.encounter_id ? await db.getEncounterById(rxData.encounter_id) : null;
       if (encounter) {
         const problems = await db.getPatientProblems(patientId);
-        for (const prob of problems.filter(p => p.status === 'active')) {
+        const matchingProblems = problems.filter(p => p.status === 'active' && (
+          (rxData.indication && p.problem_name && rxData.indication.toLowerCase().includes(p.problem_name.toLowerCase())) ||
+          (rxData.icd10_codes && p.icd10_code && rxData.icd10_codes.includes(p.icd10_code))
+        ));
+        for (const prob of matchingProblems) {
           await providerLearning.recordProviderAction(
             rxData.prescriber, prob.icd10_code, prob.problem_name,
             'medication', JSON.stringify(rxData)
@@ -736,10 +766,14 @@ app.post('/api/lab-orders', async (req, res) => {
 
     const result = await db.createLabOrder(orderData);
 
-    // Record provider learning
+    // Record provider learning — associate only with the matching indication
     try {
       const problems = await db.getPatientProblems(patientId);
-      for (const prob of problems.filter(p => p.status === 'active')) {
+      const matchingProblems = problems.filter(p => p.status === 'active' && (
+        (orderData.indication && p.problem_name && orderData.indication.toLowerCase().includes(p.problem_name.toLowerCase())) ||
+        (orderData.icd10_codes && p.icd10_code && orderData.icd10_codes.includes(p.icd10_code))
+      ));
+      for (const prob of matchingProblems) {
         await providerLearning.recordProviderAction(
           orderData.ordered_by, prob.icd10_code, prob.problem_name,
           'lab_order', JSON.stringify(orderData)
@@ -862,10 +896,14 @@ app.post('/api/imaging-orders', async (req, res) => {
 
     const result = await db.createImagingOrder(orderData);
 
-    // Record provider learning
+    // Record provider learning — associate only with the matching indication
     try {
       const problems = await db.getPatientProblems(patientId);
-      for (const prob of problems.filter(p => p.status === 'active')) {
+      const matchingProblems = problems.filter(p => p.status === 'active' && (
+        (orderData.indication && p.problem_name && orderData.indication.toLowerCase().includes(p.problem_name.toLowerCase())) ||
+        (orderData.icd10_codes && p.icd10_code && orderData.icd10_codes.includes(p.icd10_code))
+      ));
+      for (const prob of matchingProblems) {
         await providerLearning.recordProviderAction(
           orderData.ordered_by, prob.icd10_code, prob.problem_name,
           'imaging', JSON.stringify(orderData)
@@ -936,10 +974,14 @@ app.post('/api/referrals', async (req, res) => {
 
     const result = await db.createReferral(referralData);
 
-    // Record provider learning
+    // Record provider learning — associate only with the matching indication
     try {
       const problems = await db.getPatientProblems(patientId);
-      for (const prob of problems.filter(p => p.status === 'active')) {
+      const matchingProblems = problems.filter(p => p.status === 'active' && (
+        (referralData.reason && p.problem_name && referralData.reason.toLowerCase().includes(p.problem_name.toLowerCase())) ||
+        (referralData.icd10_codes && p.icd10_code && referralData.icd10_codes.includes(p.icd10_code))
+      ));
+      for (const prob of matchingProblems) {
         await providerLearning.recordProviderAction(
           referralData.referred_by, prob.icd10_code, prob.problem_name,
           'referral', JSON.stringify(referralData)
@@ -1076,6 +1118,17 @@ app.post('/api/workflow', async (req, res) => {
   }
 });
 
+// Get queue by state (for dashboard) — must precede /api/workflow/:encounterId
+app.get('/api/workflow/queue/:state', async (req, res) => {
+  try {
+    const encounters = await workflow.getQueue(req.params.state);
+    res.json(encounters);
+  } catch (error) {
+    console.error('Error fetching queue:', error);
+    res.status(500).json({ error: 'Failed to fetch queue' });
+  }
+});
+
 // Get current workflow state
 app.get('/api/workflow/:encounterId', async (req, res) => {
   try {
@@ -1103,10 +1156,11 @@ app.post('/api/workflow/:encounterId/transition', async (req, res) => {
     const err = requireFields(req.body, ['target_state']);
     if (err) return res.status(400).json({ error: err });
 
+    const userRole = req.user?.role || req.session?.userRole || null;
     const result = await workflow.transitionState(encounterId, req.body.target_state, {
       assigned_ma: req.body.assigned_ma,
       assigned_provider: req.body.assigned_provider
-    });
+    }, userRole);
 
     // If transitioning to 'vitals-recorded' or 'provider-examining', run initial CDS
     let cdsSuggestions = [];
@@ -1148,17 +1202,6 @@ app.get('/api/workflow/:encounterId/timeline', async (req, res) => {
   } catch (error) {
     console.error('Error fetching timeline:', error);
     res.status(500).json({ error: 'Failed to fetch workflow timeline' });
-  }
-});
-
-// Get queue by state (for dashboard)
-app.get('/api/workflow/queue/:state', async (req, res) => {
-  try {
-    const encounters = await workflow.getQueue(req.params.state);
-    res.json(encounters);
-  } catch (error) {
-    console.error('Error fetching queue:', error);
-    res.status(500).json({ error: 'Failed to fetch queue' });
   }
 });
 
@@ -1269,7 +1312,7 @@ app.post('/api/cds/suggestions/:id/accept', async (req, res) => {
     // Execute the suggestion (creates orders automatically)
     const result = await cds.executeSuggestion(suggestionId, encounterId, patientId, providerName);
 
-    // Record acceptance for provider learning
+    // Record acceptance for provider learning — associate only with matching indication
     try {
       const suggestion = await db.getSuggestionById(suggestionId);
       if (suggestion && patientId) {
@@ -1281,7 +1324,20 @@ app.post('/api/cds/suggestions/:id/accept', async (req, res) => {
             : JSON.stringify(suggestion.suggested_action);
         } catch { actionDetail = '{}'; }
 
-        for (const prob of problems.filter(p => p.status === 'active')) {
+        let parsedAction;
+        try {
+          parsedAction = typeof suggestion.suggested_action === 'string'
+            ? JSON.parse(suggestion.suggested_action)
+            : suggestion.suggested_action;
+        } catch { parsedAction = {}; }
+
+        const indication = parsedAction?.indication || suggestion.title || '';
+        const icd10Codes = parsedAction?.icd10_codes || '';
+        const matchingProblems = problems.filter(p => p.status === 'active' && (
+          (indication && p.problem_name && indication.toLowerCase().includes(p.problem_name.toLowerCase())) ||
+          (icd10Codes && p.icd10_code && icd10Codes.includes(p.icd10_code))
+        ));
+        for (const prob of matchingProblems) {
           await providerLearning.recordProviderAction(
             providerName, prob.icd10_code, prob.problem_name,
             suggestion.suggestion_type, actionDetail
@@ -1485,6 +1541,31 @@ app.get('/api/encounters/:id/orders', async (req, res) => {
   } catch (error) {
     console.error('Error fetching encounter orders:', error);
     res.status(500).json({ error: 'Failed to fetch encounter orders' });
+  }
+});
+
+// Get CPT code suggestions for an encounter
+app.get('/api/encounters/:id/cpt-suggestions', async (req, res) => {
+  try {
+    const encounterId = validateId(req.params.id);
+    if (!encounterId) return res.status(400).json({ error: 'Invalid encounter ID' });
+
+    const encounter = await db.getEncounterById(encounterId);
+    if (!encounter) return res.status(404).json({ error: 'Encounter not found' });
+
+    // Build billing context for CPT suggestion
+    const context = await billing.buildBillingContext(encounterId, encounter.patient_id);
+    const suggestions = billing.suggestCPTCodes(context);
+
+    res.json({
+      encounter_id: encounterId,
+      suggestions,
+      count: suggestions.length,
+      note: 'These are suggested additional codes beyond the E/M code. Review and confirm before billing.'
+    });
+  } catch (error) {
+    logger.error('Error generating CPT suggestions', { error: error.message });
+    res.status(500).json({ error: 'Failed to generate CPT suggestions' });
   }
 });
 
@@ -1971,6 +2052,77 @@ app.get('/api/billing/charges', async (req, res) => {
     logger.error('Error fetching charges', { error: err.message });
     res.status(500).json({ error: 'Failed to fetch charges' });
   }
+});
+
+// ==========================================
+// INSURANCE ELIGIBILITY VERIFICATION API
+// ==========================================
+
+// Known insurance carriers for mock eligibility verification
+const KNOWN_CARRIERS = [
+  'Aetna', 'Anthem', 'Ambetter', 'BlueCross', 'Cigna', 'Humana', 'Kaiser',
+  'Medicare', 'Medicaid', 'UnitedHealth', 'Optum', 'Molina'
+];
+
+// POST /api/insurance/verify-eligibility
+// Mock eligibility check endpoint
+app.post('/api/insurance/verify-eligibility', async (req, res) => {
+  try {
+    const { patient_id, insurance_carrier, insurance_id } = req.body;
+
+    if (!patient_id || !insurance_carrier || !insurance_id) {
+      return res.status(400).json({ error: 'patient_id, insurance_carrier, and insurance_id are required' });
+    }
+
+    // Validate carrier name format (alphanumeric + spaces)
+    if (!/^[A-Za-z\s]+$/.test(insurance_carrier)) {
+      return res.status(400).json({ error: 'insurance_carrier must contain only letters and spaces' });
+    }
+
+    // Validate ID format (alphanumeric, hyphens, underscores)
+    if (!/^[A-Za-z0-9\-_]+$/.test(insurance_id)) {
+      return res.status(400).json({ error: 'insurance_id must contain only alphanumeric characters, hyphens, and underscores' });
+    }
+
+    // Determine eligibility based on known carriers
+    const isKnown = KNOWN_CARRIERS.some(c => insurance_carrier.toLowerCase().includes(c.toLowerCase()) || c.toLowerCase().includes(insurance_carrier.toLowerCase()));
+    const eligible = isKnown;
+
+    // Generate mock eligibility response
+    const response = {
+      eligible,
+      carrier: insurance_carrier,
+      plan_type: eligible ? ['PPO', 'HMO', 'EPO', 'HDHP'][Math.floor(Math.random() * 4)] : null,
+      copay: eligible ? [20, 25, 30, 35, 40][Math.floor(Math.random() * 5)] : null,
+      deductible: eligible ? [500, 1000, 1500, 2000, 2500][Math.floor(Math.random() * 5)] : null,
+      coverage_effective: eligible ? '2026-01-01' : null,
+      coverage_end: eligible ? '2026-12-31' : null,
+      group_number: eligible ? `GRP-${Math.floor(Math.random() * 100000)}` : null,
+      verification_timestamp: new Date().toISOString()
+    };
+
+    logger.info('Insurance eligibility verified', {
+      patient_id,
+      carrier: insurance_carrier,
+      eligible,
+      session_id: req.headers['x-session-id']
+    });
+
+    res.json(response);
+  } catch (err) {
+    logger.error('Error verifying insurance eligibility', { error: err.message });
+    res.status(500).json({ error: 'Failed to verify insurance eligibility' });
+  }
+});
+
+// GET /api/insurance/carriers
+// List supported insurance carriers
+app.get('/api/insurance/carriers', (req, res) => {
+  res.json({
+    carriers: KNOWN_CARRIERS,
+    count: KNOWN_CARRIERS.length,
+    note: 'Unknown carriers will return eligible: false'
+  });
 });
 
 // ==========================================

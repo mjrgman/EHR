@@ -408,11 +408,50 @@ class CDSAgent extends BaseAgent {
   /**
    * BMI-based clinical alerts.
    */
+  /**
+   * Calculate BMI with unit detection (A-H4).
+   * If vitals include unit fields (weight_unit, height_unit), use those.
+   * Otherwise, heuristic: height > 100 → centimeters (metric); else inches (imperial).
+   * Imperial: BMI = (weight_lbs / (height_in^2)) * 703
+   * Metric:   BMI = weight_kg / (height_m^2)
+   */
+  _calculateBMI(vitals) {
+    const weight = vitals.weight;
+    const height = vitals.height;
+    if (!weight || !height) return null;
+
+    // Check for explicit unit fields first
+    const weightUnit = (vitals.weight_unit || '').toLowerCase();
+    const heightUnit = (vitals.height_unit || '').toLowerCase();
+
+    const isMetricExplicit = weightUnit === 'kg' || heightUnit === 'cm' || heightUnit === 'm';
+    const isImperialExplicit = weightUnit === 'lbs' || weightUnit === 'lb' || heightUnit === 'in';
+
+    if (isMetricExplicit) {
+      // Metric: convert height to meters if in cm
+      const heightM = height > 3 ? height / 100 : height; // > 3 means centimeters
+      return weight / (heightM * heightM);
+    } else if (isImperialExplicit) {
+      return (weight / (height * height)) * 703;
+    }
+
+    // Heuristic: height > 100 likely centimeters (metric system)
+    if (height > 100) {
+      // Assume metric: height in cm, weight in kg
+      const heightM = height / 100;
+      return weight / (heightM * heightM);
+    }
+
+    // Default: assume imperial (height in inches, weight in lbs)
+    return (weight / (height * height)) * 703;
+  }
+
   _checkBMI(context) {
     const vitals = context.vitals || {};
     if (!vitals.weight || !vitals.height) return [];
 
-    const bmi = (vitals.weight / (vitals.height * vitals.height)) * 703;
+    const bmi = this._calculateBMI(vitals);
+    if (bmi === null) return [];
     const suggestions = [];
 
     if (bmi >= 30) {
@@ -453,15 +492,7 @@ class CDSAgent extends BaseAgent {
     return suggestions;
   }
 
-  _age(dob) {
-    if (!dob) return 0;
-    const birth = new Date(dob);
-    const now = new Date();
-    let age = now.getFullYear() - birth.getFullYear();
-    const m = now.getMonth() - birth.getMonth();
-    if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
-    return age;
-  }
+  // _age() inherited from BaseAgent (L1)
 
   _monthsSince(dateStr) {
     if (!dateStr) return Infinity;

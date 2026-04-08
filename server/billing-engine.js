@@ -256,10 +256,128 @@ async function buildBillingContext(encounterId, patientId) {
   };
 }
 
+// ==========================================
+// CPT CODE SUGGESTION ENGINE
+// ==========================================
+
+/**
+ * Suggest additional CPT codes based on encounter context.
+ * Maps lab orders, imaging orders, and documented procedures to CPT codes.
+ *
+ * @param {Object} context - Encounter context from buildBillingContext()
+ * @returns {Array} Array of suggested CPT codes with descriptions
+ */
+function suggestCPTCodes(context) {
+  const suggestions = [];
+  const transcript = (context.transcript || '').toLowerCase();
+  const chiefComplaint = (context.chiefComplaint || '').toLowerCase();
+  const text = `${chiefComplaint} ${transcript}`;
+
+  // Map lab order names to CPT codes
+  const labToCPT = {
+    'CBC': { code: '85025', desc: 'CBC with differential' },
+    'CMP': { code: '80053', desc: 'Comprehensive metabolic panel' },
+    'BMP': { code: '80048', desc: 'Basic metabolic panel' },
+    'TSH': { code: '84443', desc: 'Thyroid stimulating hormone' },
+    'Lipid': { code: '80061', desc: 'Lipid panel' },
+    'PSA': { code: '84153', desc: 'Prostate specific antigen' },
+    'HbA1c': { code: '83036', desc: 'Hemoglobin A1c' },
+    'Troponin': { code: '84484', desc: 'Troponin I/T' },
+    'BNP': { code: '83880', desc: 'B-type natriuretic peptide' },
+    'INR': { code: '85610', desc: 'INR/PT' },
+    'Urinalysis': { code: '81003', desc: 'Urinalysis, automated' }
+  };
+
+  // Map imaging order types to CPT codes
+  const imagingToCPT = {
+    'Chest X-ray': { code: '71046', desc: 'Chest X-ray, 2 views' },
+    'CXR': { code: '71046', desc: 'Chest X-ray, 2 views' },
+    'CT': { code: '70450', desc: 'CT head without contrast' },
+    'CT scan': { code: '70450', desc: 'CT head without contrast' },
+    'MRI': { code: '70551', desc: 'MRI brain without contrast' },
+    'Ultrasound': { code: '76700', desc: 'Abdominal ultrasound' },
+    'EKG': { code: '93000', desc: 'EKG, complete' },
+    'Echo': { code: '93307', desc: 'Echocardiogram, comprehensive' }
+  };
+
+  // Procedure keywords to CPT codes
+  const procedureToCPT = {
+    'suture': { code: '12001', desc: 'Simple wound repair, <2.5 cm' },
+    'suturing': { code: '12001', desc: 'Simple wound repair, <2.5 cm' },
+    'injection': { code: '90834', desc: 'Therapeutic injection' },
+    'removal': { code: '10120', desc: 'Incision and drainage' },
+    'excision': { code: '11100', desc: 'Biopsy, skin lesion' },
+    'cautery': { code: '17261', desc: 'Destruction of skin lesion' },
+    'splint': { code: '29125', desc: 'Application of short arm splint' },
+    'joint aspiration': { code: '20610', desc: 'Arthrocentesis, major joint' },
+    'EKG': { code: '93000', desc: 'EKG, complete' }
+  };
+
+  // Scan lab orders
+  if (context.labOrders && Array.isArray(context.labOrders)) {
+    for (const order of context.labOrders) {
+      const testName = order.test_name || '';
+      for (const [key, cpt] of Object.entries(labToCPT)) {
+        if (testName.toLowerCase().includes(key.toLowerCase())) {
+          const isDuplicate = suggestions.some(s => s.code === cpt.code);
+          if (!isDuplicate) {
+            suggestions.push({
+              code: cpt.code,
+              description: cpt.desc,
+              reason: `Lab order: ${testName}`,
+              category: 'laboratory'
+            });
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  // Scan imaging orders
+  if (context.imagingOrders && Array.isArray(context.imagingOrders)) {
+    for (const order of context.imagingOrders) {
+      const studyType = order.study_type || '';
+      for (const [key, cpt] of Object.entries(imagingToCPT)) {
+        if (studyType.toLowerCase().includes(key.toLowerCase())) {
+          const isDuplicate = suggestions.some(s => s.code === cpt.code);
+          if (!isDuplicate) {
+            suggestions.push({
+              code: cpt.code,
+              description: cpt.desc,
+              reason: `Imaging order: ${studyType}`,
+              category: 'imaging'
+            });
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  // Scan transcript for procedure keywords
+  for (const [keyword, cpt] of Object.entries(procedureToCPT)) {
+    if (text.includes(keyword)) {
+      const isDuplicate = suggestions.some(s => s.code === cpt.code);
+      if (!isDuplicate) {
+        suggestions.push({
+          code: cpt.code,
+          description: cpt.desc,
+          reason: `Procedure mentioned: ${keyword}`,
+          category: 'procedure'
+        });
+      }
+    }
+  }
+
+  return suggestions;
+}
+
 module.exports = {
   assessMDM,
   captureCharge,
   finalizeCheckout,
   buildBillingContext,
+  suggestCPTCodes,
   EM_RVU
 };

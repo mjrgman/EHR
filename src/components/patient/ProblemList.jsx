@@ -7,7 +7,7 @@ export default function ProblemList({ problems = [], compact = false }) {
   return (
     <ul className="space-y-1.5">
       {all.map((p, i) => (
-        <li key={i} className="flex items-start gap-2 text-sm">
+        <li key={p.id || p.problem_name || i} className="flex items-start gap-2 text-sm">
           <span className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.status === 'chronic' ? 'bg-amber-400' : 'bg-blue-500'}`} />
           <div className="flex-1 min-w-0">
             <span className="font-medium text-gray-800">{p.problem_name}</span>

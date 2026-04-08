@@ -16,7 +16,7 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
 
 export default function ReviewPage() {
   const { encounterId } = useParams();
-  const eid = parseInt(encounterId);
+  const eid = parseInt(encounterId, 10);
   const navigate = useNavigate();
   const toast = useToast();
   const { providerName } = useAuth();
@@ -31,6 +31,18 @@ export default function ReviewPage() {
   const { patient } = usePatient(encounter?.patient_id);
   const { workflow, timeline, transition } = useWorkflow(eid);
   const { accepted, rejected } = useCDS(eid, encounter?.patient_id, { pollInterval: 0 });
+
+  // --- Unsaved work protection ---
+  useEffect(() => {
+    const handler = (e) => {
+      if (soapDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [soapDirty]);
 
   // Seed SOAP note from encounter data
   useEffect(() => {
@@ -135,8 +147,6 @@ export default function ReviewPage() {
       navigate('/checkout/' + encounterId);
     } catch (err) {
       toast.error('Signing failed: ' + err.message);
-      // Attempt navigation anyway since partial transition may have occurred
-      navigate('/checkout/' + encounterId);
     } finally {
       setSigning(false);
     }

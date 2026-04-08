@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../api/client';
+import api, { safeLog } from '../api/client';
 import Card, { CardHeader, CardBody } from '../components/common/Card';
 import TouchButton from '../components/common/TouchButton';
 import Badge from '../components/common/Badge';
@@ -91,7 +91,7 @@ export default function DashboardPage() {
       setDashboard(dashData);
     } catch (err) {
       toast.error('Failed to load dashboard data');
-      console.error(err);
+      safeLog.error('Dashboard error:', err);
     } finally {
       setLoading(false);
     }
@@ -137,7 +137,7 @@ export default function DashboardPage() {
       await loadData();
     } catch (err) {
       toast.error('Failed to create patient');
-      console.error(err);
+      safeLog.error('Dashboard error:', err);
     } finally {
       setSavingPatient(false);
     }
@@ -156,7 +156,7 @@ export default function DashboardPage() {
       navigate(`/checkin/${encounter.id}`);
     } catch (err) {
       toast.error('Failed to start new visit');
-      console.error(err);
+      safeLog.error('Dashboard error:', err);
     } finally {
       setStartingVisit(null);
     }
@@ -176,7 +176,7 @@ export default function DashboardPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">
-                {getGreeting()}, Dr. MJR
+                {getGreeting()}, {providerName || 'Doctor'}
               </h1>
               <p className="text-sm text-gray-500 mt-0.5">{formatDate(today)}</p>
             </div>

@@ -324,16 +324,150 @@ async function runScenario(scenario) {
 // MAIN
 // ==========================================
 
+// ==========================================
+// LIFECYCLE SCENARIOS (Embedded)
+// ==========================================
+
+const LIFECYCLE_SCENARIOS = [
+  {
+    "id": "AWV-NEW-PATIENT-001",
+    "name": "New Patient Annual Wellness Visit",
+    "category": "lifecycle",
+    "severity": "low",
+    "patient": {
+      "first_name": "Margaret", "middle_name": "Ruth", "last_name": "Henderson",
+      "dob": "1972-03-15", "sex": "F", "phone": "478-555-0101",
+      "email": "margaret.henderson@email.com", "address_line1": "445 Oak Ridge Road",
+      "city": "Bonaire", "state": "GA", "zip": "31005",
+      "insurance_carrier": "Anthem", "insurance_id": "ANT-5511234"
+    },
+    "problems": [],
+    "medications": [],
+    "allergies": [],
+    "labs": [],
+    "encounter": {
+      "encounter_type": "Annual Wellness Visit", "chief_complaint": "Annual physical",
+      "provider": "Dr. Renner"
+    },
+    "vitals": {
+      "systolic_bp": 128, "diastolic_bp": 80, "heart_rate": 72,
+      "temperature": 98.6, "weight": 165, "height": 66, "spo2": 99, "respiratory_rate": 14
+    },
+    "transcript": "52-year-old female here for annual wellness visit. No acute complaints. States she feels well. Sleep is good. Exercise 3x per week. Denies tobacco, alcohol use is social."
+  },
+  {
+    "id": "URI-ACUTE-001",
+    "name": "Acute Sinusitis",
+    "category": "lifecycle",
+    "severity": "low",
+    "patient": {
+      "first_name": "David", "middle_name": "James", "last_name": "Martinez",
+      "dob": "1990-07-22", "sex": "M", "phone": "478-555-0202",
+      "email": "david.martinez@email.com", "address_line1": "312 Maple Street",
+      "city": "Macon", "state": "GA", "zip": "31201",
+      "insurance_carrier": "Ambetter", "insurance_id": "AMB-7722301"
+    },
+    "problems": [
+      { "problem_name": "Acute Sinusitis", "icd10_code": "J01.90", "status": "active", "onset_date": "2026-04-04" }
+    ],
+    "medications": [],
+    "allergies": [
+      { "allergen": "Sulfa drugs", "reaction": "Rash", "severity": "mild" }
+    ],
+    "labs": [],
+    "encounter": {
+      "encounter_type": "Office Visit - Acute", "chief_complaint": "Sinus infection",
+      "provider": "Dr. Renner"
+    },
+    "vitals": {
+      "systolic_bp": 120, "diastolic_bp": 76, "heart_rate": 88,
+      "temperature": 100.4, "weight": 175, "height": 70, "spo2": 98, "respiratory_rate": 16
+    },
+    "transcript": "34-year-old male with sinus congestion, facial pressure, nasal discharge x5 days. Mild fever. Denies shortness of breath. Previously had sinus infection last year. Prescribed amoxicillin-clavulanate. Will follow up in 2 weeks if not improving."
+  },
+  {
+    "id": "CDM-DM-HTN-001",
+    "name": "Chronic Disease Management: Diabetes + Hypertension",
+    "category": "lifecycle",
+    "severity": "medium",
+    "patient": {
+      "first_name": "Dorothy", "middle_name": "Elizabeth", "last_name": "Morrison",
+      "dob": "1958-11-08", "sex": "F", "phone": "478-555-0303",
+      "email": "dorothy.morrison@email.com", "address_line1": "789 Heritage Lane",
+      "city": "Bonaire", "state": "GA", "zip": "31005",
+      "insurance_carrier": "Medicare", "insurance_id": "MCR-5811089"
+    },
+    "problems": [
+      { "problem_name": "Type 2 Diabetes Mellitus", "icd10_code": "E11.9", "status": "active", "onset_date": "2015-06-01" },
+      { "problem_name": "Essential Hypertension", "icd10_code": "I10", "status": "active", "onset_date": "2010-03-15" }
+    ],
+    "medications": [
+      { "medication_name": "Metformin", "generic_name": "Metformin", "dose": "1000mg", "route": "PO", "frequency": "twice daily", "status": "active", "prescriber": "Dr. Renner" },
+      { "medication_name": "Lisinopril", "generic_name": "Lisinopril", "dose": "20mg", "route": "PO", "frequency": "daily", "status": "active", "prescriber": "Dr. Renner" }
+    ],
+    "allergies": [],
+    "labs": [
+      { "test_name": "HbA1c", "result_value": "7.2", "units": "%", "abnormal_flag": false, "result_date": "2026-03-15" },
+      { "test_name": "Glucose", "result_value": "142", "units": "mg/dL", "abnormal_flag": true, "result_date": "2026-03-15" }
+    ],
+    "encounter": {
+      "encounter_type": "Office Visit - Chronic", "chief_complaint": "Diabetes and hypertension follow-up",
+      "provider": "Dr. Renner"
+    },
+    "vitals": {
+      "systolic_bp": 135, "diastolic_bp": 82, "heart_rate": 76,
+      "temperature": 98.6, "weight": 198, "height": 64, "spo2": 98, "respiratory_rate": 16
+    },
+    "transcript": "68-year-old female with type 2 diabetes and hypertension. Reports good medication adherence. Glucose readings at home have been 120-150 fasting. BP readings 130-140 systolic. States she is monitoring diet and trying to walk daily. Last HbA1c was 7.2 three weeks ago. No polyuria, polydipsia, or visual changes."
+  },
+  {
+    "id": "CHEST-PAIN-URGENT-001",
+    "name": "Chest Pain - Urgent Evaluation",
+    "category": "lifecycle",
+    "severity": "high",
+    "patient": {
+      "first_name": "Richard", "middle_name": "Thomas", "last_name": "Sullivan",
+      "dob": "1966-09-12", "sex": "M", "phone": "478-555-0404",
+      "email": "richard.sullivan@email.com", "address_line1": "654 Elm Grove Drive",
+      "city": "Macon", "state": "GA", "zip": "31210",
+      "insurance_carrier": "BlueCross", "insurance_id": "BC-6609121"
+    },
+    "problems": [
+      { "problem_name": "Hypertension", "icd10_code": "I10", "status": "active", "onset_date": "2005-01-01" },
+      { "problem_name": "Hyperlipidemia", "icd10_code": "E78.5", "status": "active", "onset_date": "2008-06-01" }
+    ],
+    "medications": [
+      { "medication_name": "Atorvastatin", "generic_name": "Atorvastatin", "dose": "40mg", "route": "PO", "frequency": "daily", "status": "active", "prescriber": "Dr. Renner" },
+      { "medication_name": "Metoprolol", "generic_name": "Metoprolol", "dose": "50mg", "route": "PO", "frequency": "twice daily", "status": "active", "prescriber": "Dr. Renner" }
+    ],
+    "allergies": [],
+    "labs": [],
+    "encounter": {
+      "encounter_type": "Office Visit - Urgent", "chief_complaint": "Chest discomfort",
+      "provider": "Dr. Renner"
+    },
+    "vitals": {
+      "systolic_bp": 148, "diastolic_bp": 92, "heart_rate": 102,
+      "temperature": 98.8, "weight": 210, "height": 72, "spo2": 97, "respiratory_rate": 18
+    },
+    "transcript": "58-year-old male presenting with chest discomfort x2 hours. Describes pressure sensation in substernal region. Associated with shortness of breath. Denies radiation to arm. No diaphoresis. Risk factors: hypertension, hyperlipidemia, former smoker. EKG ordered stat. Patient appears anxious."
+  }
+];
+
 async function main() {
   const args = process.argv.slice(2);
-  const scenarios = JSON.parse(fs.readFileSync(SCENARIOS_FILE, 'utf-8'));
+  const allScenarios = JSON.parse(fs.readFileSync(SCENARIOS_FILE, 'utf-8'));
 
   if (args.includes('--list')) {
     console.log('\nAvailable Clinical Scenarios:\n');
-    for (const s of scenarios.scenarios) {
+    for (const s of allScenarios.scenarios) {
       console.log(`  ${s.id.padEnd(25)} ${s.name} [${s.severity}]`);
     }
-    console.log(`\n  Total: ${scenarios.scenarios.length} scenarios\n`);
+    console.log('\nLifecycle Scenarios (--lifecycle flag):\n');
+    for (const s of LIFECYCLE_SCENARIOS) {
+      console.log(`  ${s.id.padEnd(25)} ${s.name} [${s.severity}]`);
+    }
+    console.log(`\n  Total: ${allScenarios.scenarios.length + LIFECYCLE_SCENARIOS.length} scenarios\n`);
     return;
   }
 
@@ -348,9 +482,17 @@ async function main() {
   console.log('Server is running.\n');
 
   // Filter scenarios
-  let toRun = scenarios.scenarios;
-  if (args.length > 0 && !args[0].startsWith('--')) {
-    toRun = scenarios.scenarios.filter(s => s.id === args[0]);
+  let toRun = allScenarios.scenarios;
+
+  // Handle --lifecycle flag
+  if (args.includes('--lifecycle')) {
+    toRun = LIFECYCLE_SCENARIOS;
+  } else if (args.length > 0 && !args[0].startsWith('--')) {
+    // Check in both standard and lifecycle scenarios
+    toRun = allScenarios.scenarios.filter(s => s.id === args[0]);
+    if (toRun.length === 0) {
+      toRun = LIFECYCLE_SCENARIOS.filter(s => s.id === args[0]);
+    }
     if (toRun.length === 0) {
       console.error(`Scenario not found: ${args[0]}`);
       console.error('Use --list to see available scenarios.');

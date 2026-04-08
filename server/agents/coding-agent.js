@@ -85,6 +85,17 @@ class CodingAgent extends BaseAgent {
     const codingMethod = finalLevel === timeBasedLevel.level && timeBasedLevel.level > mdmAssessment.level
       ? 'time-based' : 'mdm-based';
 
+    // Upcoding risk flag (A-M6): warn if time-based level exceeds MDM by > 1
+    let upcodingWarning = null;
+    if (timeBasedLevel.level > 0 && timeBasedLevel.level > mdmAssessment.level + 1) {
+      upcodingWarning = {
+        risk: 'potential_upcoding',
+        severity: 'medium',
+        message: `Time-based level (${timeBasedLevel.level}) exceeds MDM level (${mdmAssessment.level}) by ${timeBasedLevel.level - mdmAssessment.level} levels. Review for audit risk.`,
+        recommendation: 'Verify time documentation supports the selected level. Consider MDM-based coding if time documentation is insufficient.'
+      };
+    }
+
     // 3. Map and validate ICD-10 codes
     const icd10Codes = this._mapICD10Codes(context, scribeResult);
 
@@ -107,6 +118,7 @@ class CodingAgent extends BaseAgent {
       codingMethod,
       mdmAssessment,
       timeBasedLevel,
+      upcodingWarning,
       icd10Codes,
       hccFlags,
       completenessScore: completeness.score,

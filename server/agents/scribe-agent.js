@@ -77,13 +77,8 @@ class ScribeAgent extends BaseAgent {
     const physicalExam = clinicalData?.physical_exam || {};
 
     // Merge extracted vitals with any existing vitals (existing take priority)
+    // Spread order: extracted first, existing overwrites — no redundant loop needed (L2)
     const mergedVitals = { ...vitals, ...existingVitals };
-    // But if existing is empty and we extracted something, use extracted
-    for (const key of Object.keys(vitals)) {
-      if (!mergedVitals[key] && vitals[key]) {
-        mergedVitals[key] = vitals[key];
-      }
-    }
 
     // --- Generate SOAP note ---
     let soapNote = null;

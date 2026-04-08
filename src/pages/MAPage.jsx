@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api from '../api/client';
+import api, { safeLog } from '../api/client';
 import { usePatient } from '../hooks/usePatient';
 import { useWorkflow } from '../hooks/useWorkflow';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
@@ -95,6 +95,21 @@ export default function MAPage() {
   // Allergy review confirmed
   const [allergyReviewed, setAllergyReviewed] = useState(false);
 
+  // --- Unsaved work protection ---
+  const hasUnsavedChanges = chiefComplaint.trim() !== '' ||
+    Object.values(vitals).some(v => v !== '');
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsavedChanges]);
+
   // --- Load encounter on mount ---
   useEffect(() => {
     api.getEncounter(encounterId)
@@ -103,7 +118,7 @@ export default function MAPage() {
         setChiefComplaint(enc.chief_complaint || '');
       })
       .catch(err => {
-        console.error(err);
+        safeLog.error('Failed to load encounter:', err);
         toast.error('Failed to load encounter');
       })
       .finally(() => setLoading(false));
@@ -141,7 +156,7 @@ export default function MAPage() {
       const r = await api.addVitalsFromSpeech({
         transcript: speech.transcript,
         patient_id: encounter.patient_id,
-        encounter_id: parseInt(encounterId),
+        encounter_id: parseInt(encounterId, 10),
       });
       if (r) {
         setVitals(prev => ({
@@ -158,7 +173,7 @@ export default function MAPage() {
         toast.success('Vitals extracted from voice');
       }
     } catch (e) {
-      console.error(e);
+      safeLog.error('MA error:', e);
       toast.error('Failed to extract vitals from speech');
     } finally {
       setExtractingVoice(false);
@@ -170,17 +185,17 @@ export default function MAPage() {
     try {
       const data = {
         patient_id: encounter.patient_id,
-        encounter_id: parseInt(encounterId),
+        encounter_id: parseInt(encounterId, 10),
         recorded_by: 'MA',
       };
-      if (vitals.systolic_bp)      data.systolic_bp      = parseInt(vitals.systolic_bp);
-      if (vitals.diastolic_bp)     data.diastolic_bp     = parseInt(vitals.diastolic_bp);
-      if (vitals.heart_rate)       data.heart_rate       = parseInt(vitals.heart_rate);
+      if (vitals.systolic_bp)      data.systolic_bp      = parseInt(vitals.systolic_bp, 10);
+      if (vitals.diastolic_bp)     data.diastolic_bp     = parseInt(vitals.diastolic_bp, 10);
+      if (vitals.heart_rate)       data.heart_rate       = parseInt(vitals.heart_rate, 10);
       if (vitals.temperature)      data.temperature      = parseFloat(vitals.temperature);
       if (vitals.weight)           data.weight           = parseFloat(vitals.weight);
       if (vitals.height)           data.height           = parseFloat(vitals.height);
-      if (vitals.respiratory_rate) data.respiratory_rate = parseInt(vitals.respiratory_rate);
-      if (vitals.spo2)             data.spo2             = parseInt(vitals.spo2);
+      if (vitals.respiratory_rate) data.respiratory_rate = parseInt(vitals.respiratory_rate, 10);
+      if (vitals.spo2)             data.spo2             = parseInt(vitals.spo2, 10);
 
       await api.addVitals(data);
 
@@ -199,7 +214,7 @@ export default function MAPage() {
       toast.success('Vitals saved and sent to provider');
       navigate('/encounter/' + encounterId);
     } catch (e) {
-      console.error(e);
+      safeLog.error('MA error:', e);
       toast.error('Save failed: ' + e.message);
     } finally {
       setSaving(false);

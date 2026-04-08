@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 
 const EncounterContext = createContext(null);
 
@@ -16,8 +16,12 @@ export function EncounterProvider({ children }) {
     setActivePatientId(null);
   }, []);
 
+  const value = useMemo(() => ({
+    activeEncounter, activePatientId, startEncounter, clearEncounter, setActiveEncounter
+  }), [activeEncounter, activePatientId, startEncounter, clearEncounter, setActiveEncounter]);
+
   return (
-    <EncounterContext.Provider value={{ activeEncounter, activePatientId, startEncounter, clearEncounter, setActiveEncounter }}>
+    <EncounterContext.Provider value={value}>
       {children}
     </EncounterContext.Provider>
   );

@@ -16,8 +16,7 @@ import {
   Stethoscope, RefreshCw, ChevronDown, ChevronRight,
   Heart, Syringe, Eye, UserCheck
 } from 'lucide-react';
-
-const API_BASE = '/api';
+import api from '../../api/client';
 
 // ==========================================
 // SECTION COMPONENTS
@@ -146,32 +145,15 @@ export default function PreVisitPanel({ patientId, encounterId }) {
 
     try {
       // Fetch briefing, MA prep, and pre-visit labs in parallel
-      const [briefRes, prepRes, labsRes] = await Promise.all([
-        fetch(`${API_BASE}/agents/briefing/${patientId}${encounterId ? '?encounter_id=' + encounterId : ''}`),
-        fetch(`${API_BASE}/agents/ma`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ patient_id: patientId, encounter_id: encounterId, request_type: 'encounter_prep' })
-        }),
-        fetch(`${API_BASE}/agents/ma`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ patient_id: patientId, encounter_id: encounterId, request_type: 'pre_visit_labs' })
-        })
+      const results = await Promise.allSettled([
+        api.getAgentBriefing(patientId, encounterId),
+        api.runMAAgent({ patient_id: patientId, encounter_id: encounterId, request_type: 'encounter_prep' }),
+        api.runMAAgent({ patient_id: patientId, encounter_id: encounterId, request_type: 'pre_visit_labs' })
       ]);
 
-      if (briefRes.ok) {
-        const data = await briefRes.json();
-        setBriefing(data);
-      }
-      if (prepRes.ok) {
-        const data = await prepRes.json();
-        setMaPrep(data);
-      }
-      if (labsRes.ok) {
-        const data = await labsRes.json();
-        setPreVisitLabs(data);
-      }
+      if (results[0].status === 'fulfilled') setBriefing(results[0].value);
+      if (results[1].status === 'fulfilled') setMaPrep(results[1].value);
+      if (results[2].status === 'fulfilled') setPreVisitLabs(results[2].value);
     } catch (err) {
       setError(err.message);
     } finally {

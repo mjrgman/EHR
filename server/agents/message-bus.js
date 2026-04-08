@@ -12,6 +12,7 @@
  */
 
 const EventEmitter = require('events');
+const crypto = require('crypto');
 
 // Message types as defined in Agentic EHR-VISION.md Section VI
 const MESSAGE_TYPES = {
@@ -359,7 +360,7 @@ class MessageBus extends EventEmitter {
    * @returns {string}
    */
   _generateMessageId() {
-    return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `msg_${crypto.randomUUID()}`;
   }
 }
 

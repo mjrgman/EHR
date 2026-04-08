@@ -32,6 +32,9 @@ class AgentOrchestrator extends EventEmitter {
     this.pipelineRunning = false;
     this.lastPipelineResult = null;
 
+    // Promise-based mutex for pipeline concurrency (A-C3)
+    this._pipelineLock = Promise.resolve();
+
     // Initialize message bus and memory system
     this.db = db;
     this.messageBus = new MessageBus(db);
@@ -149,9 +152,12 @@ class AgentOrchestrator extends EventEmitter {
    * @returns {Promise<AgentPipelineResult>}
    */
   async runPipeline(context, options = {}) {
-    if (this.pipelineRunning) {
-      throw new Error('Pipeline already running for this orchestrator instance');
-    }
+    // Promise-based mutex: queue behind any in-flight pipeline (A-C3)
+    let releaseLock;
+    const lockPromise = new Promise(resolve => { releaseLock = resolve; });
+    const previousLock = this._pipelineLock;
+    this._pipelineLock = lockPromise;
+    await previousLock; // Wait for previous pipeline to finish
 
     this.pipelineRunning = true;
     this.emit('pipeline:start', { encounterId: context.encounter?.id });
@@ -159,27 +165,33 @@ class AgentOrchestrator extends EventEmitter {
     const pipelineStart = Date.now();
     const agentResults = {};
 
-    // Apply only/skip filters
-    if (options.only) {
-      for (const [name, agent] of this.agents) {
-        agent.enabled = options.only.includes(name);
-      }
+    // Save original enabled states before mutation (A-C2)
+    const savedStates = new Map();
+    for (const [name, agent] of this.agents) {
+      savedStates.set(name, agent.enabled);
     }
-    if (options.skip) {
-      for (const name of options.skip) {
-        const agent = this.agents.get(name);
-        if (agent) agent.enabled = false;
-      }
-    }
-
-    // Reset all agents
-    for (const [, agent] of this.agents) {
-      agent.reset();
-    }
-
-    const phases = this._buildPhases();
 
     try {
+      // Apply only/skip filters on shared agent instances (restored in finally)
+      if (options.only) {
+        for (const [name, agent] of this.agents) {
+          agent.enabled = options.only.includes(name);
+        }
+      }
+      if (options.skip) {
+        for (const name of options.skip) {
+          const agent = this.agents.get(name);
+          if (agent) agent.enabled = false;
+        }
+      }
+
+      // Reset all agents
+      for (const [, agent] of this.agents) {
+        agent.reset();
+      }
+
+      const phases = this._buildPhases();
+
       for (let i = 0; i < phases.length; i++) {
         const phase = phases[i];
         this.emit('pipeline:phase', {
@@ -226,7 +238,13 @@ class AgentOrchestrator extends EventEmitter {
         }
       }
     } finally {
+      // Restore original enabled states so options.only doesn't permanently disable agents (A-C2)
+      for (const [name, original] of savedStates) {
+        const agent = this.agents.get(name);
+        if (agent) agent.enabled = original;
+      }
       this.pipelineRunning = false;
+      releaseLock(); // Release mutex (A-C3)
     }
 
     const totalTimeMs = Date.now() - pipelineStart;

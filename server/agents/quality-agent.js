@@ -72,8 +72,15 @@ class QualityAgent extends BaseAgent {
           if (!hasScreening) {
             return { status: 'gap', message: 'No tobacco screening documented', action: 'Screen for tobacco use' };
           }
+          // Check for negation words near tobacco/smoking mentions to avoid false positives (A-M1)
+          const negationPattern = /(?:denies|denied|no|not|never|quit|former|stopped|negative)\s+(?:\w+\s+){0,3}(?:tobacco|smok|cigarette|nicotine)/;
+          const isNegated = negationPattern.test(transcript);
           const hasCessation = /(?:quit|cessation|counsel|patch|gum|chantix|wellbutrin|varenicline)/.test(transcript);
           const isSmoker = /(?:smokes?|smoking|pack|tobacco\s*use|current\s*smok)/.test(transcript);
+          // If all smoking references are negated, patient is screened but negative
+          if (isNegated && !isSmoker) {
+            return { status: 'met', message: 'Tobacco screening documented — patient denies tobacco use' };
+          }
           if (isSmoker && !hasCessation) {
             return { status: 'not_met', message: 'Tobacco user — cessation intervention not documented', action: 'Provide cessation counseling or pharmacotherapy' };
           }
@@ -108,7 +115,24 @@ class QualityAgent extends BaseAgent {
           if (!vitals.weight || !vitals.height) {
             return { status: 'gap', message: 'Height and/or weight not recorded — cannot calculate BMI', action: 'Record height and weight' };
           }
-          const bmi = (vitals.weight / (vitals.height * vitals.height)) * 703;
+          // Unit-aware BMI calculation (same logic as CDS agent A-H4)
+          const h = vitals.height;
+          const w = vitals.weight;
+          const wUnit = (vitals.weight_unit || '').toLowerCase();
+          const hUnit = (vitals.height_unit || '').toLowerCase();
+          const isMetric = wUnit === 'kg' || hUnit === 'cm' || hUnit === 'm';
+          const isImperial = wUnit === 'lbs' || wUnit === 'lb' || hUnit === 'in';
+          let bmi;
+          if (isMetric) {
+            const hm = h > 3 ? h / 100 : h;
+            bmi = w / (hm * hm);
+          } else if (isImperial || h <= 100) {
+            bmi = (w / (h * h)) * 703;
+          } else {
+            // height > 100, no explicit unit → assume metric (cm)
+            const hm = h / 100;
+            bmi = w / (hm * hm);
+          }
           if (bmi < 18.5 || bmi >= 25) {
             const transcript = (ctx.encounter?.transcript || '').toLowerCase();
             const hasPlan = /(?:diet|exercise|nutrition|weight\s*(?:management|loss)|refer|counseling|bariatric)/.test(transcript);
@@ -453,15 +477,7 @@ class QualityAgent extends BaseAgent {
       .sort((a, b) => new Date(b.result_date) - new Date(a.result_date))[0] || null;
   }
 
-  _age(dob) {
-    if (!dob) return 0;
-    const birth = new Date(dob);
-    const now = new Date();
-    let age = now.getFullYear() - birth.getFullYear();
-    const m = now.getMonth() - birth.getMonth();
-    if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
-    return age;
-  }
+  // _age() inherited from BaseAgent (L1)
 }
 
 module.exports = { QualityAgent };

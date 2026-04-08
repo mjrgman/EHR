@@ -130,16 +130,11 @@ function methodToAction(method) {
 }
 
 function resolveUserIdentity(req) {
-  return req.headers[USER_HEADER]
-    || req.body?.provider
-    || req.body?.prescriber
-    || req.body?.ordered_by
-    || req.body?.referred_by
-    || req.body?.recorded_by
-    || req.body?.provider_name
-    || req.query?.provider
-    || process.env.PROVIDER_NAME
-    || 'Unknown User';
+  // Only trust authenticated identity — never request body fields
+  return req.user?.username
+    || req.user?.sub
+    || req.headers[USER_HEADER]
+    || 'anonymous';
 }
 
 function extractResourceId(req) {
@@ -150,8 +145,14 @@ function extractResourceId(req) {
 function scrubAndTruncateBody(body, maxLen) {
   if (!body || typeof body !== 'object') return null;
   const scrubbed = { ...body };
-  delete scrubbed.transcript;
-  delete scrubbed.soap_note;
+  // Remove PHI and sensitive fields from audit log body summaries
+  const PHI_SCRUB_FIELDS = [
+    'transcript', 'soap_note', 'first_name', 'last_name', 'dob',
+    'phone', 'email', 'insurance_id', 'address_line1', 'ssn'
+  ];
+  for (const field of PHI_SCRUB_FIELDS) {
+    if (field in scrubbed) scrubbed[field] = '[REDACTED]';
+  }
   const str = JSON.stringify(scrubbed);
   return str.length > maxLen ? str.slice(0, maxLen) + '...[truncated]' : str;
 }
@@ -236,9 +237,10 @@ function auditMiddleware(options = {}) {
 
     const startTime = Date.now();
 
-    // Resolve session
+    // Resolve session — validate UUID format to reject spoofed values
+    const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     let sessionId = req.headers[SESSION_HEADER];
-    if (!sessionId) {
+    if (!sessionId || !UUID_PATTERN.test(sessionId)) {
       sessionId = generateSessionId();
       res.setHeader('X-Audit-Session-Id', sessionId);
     }

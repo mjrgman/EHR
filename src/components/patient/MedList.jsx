@@ -7,7 +7,7 @@ export default function MedList({ medications = [], compact = false }) {
   return (
     <ul className="space-y-1.5">
       {active.map((m, i) => (
-        <li key={i} className="text-sm">
+        <li key={m.id || m.medication_name || i} className="text-sm">
           <span className="font-medium text-gray-800">{m.medication_name}</span>
           {!compact && <span className="text-gray-500 ml-1">{m.dose} {m.route} {m.frequency}</span>}
         </li>

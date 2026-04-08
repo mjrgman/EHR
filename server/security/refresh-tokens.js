@@ -152,7 +152,7 @@ async function revokeAllForUser(userId) {
  */
 async function pruneExpired() {
   const result = await db.dbRun(
-    `DELETE FROM refresh_tokens WHERE expires_at < datetime('now') OR revoked = 1 AND created_at < datetime('now', '-1 day')`
+    `DELETE FROM refresh_tokens WHERE (expires_at < datetime('now')) OR (revoked = 1 AND created_at < datetime('now', '-1 day'))`
   );
   if (result.changes > 0) {
     console.log(`[REFRESH] Pruned ${result.changes} expired/revoked tokens`);

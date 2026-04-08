@@ -14,6 +14,7 @@ export default function AppShell({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [queueCounts, setQueueCounts] = useState({});
+  const [queueError, setQueueError] = useState(false);
   const [clock, setClock] = useState(new Date());
   const navigate = useNavigate();
   const location = useLocation();
@@ -29,7 +30,8 @@ export default function AppShell({ children }) {
       try {
         const data = await api.getDashboard();
         setQueueCounts(data.queue_counts || {});
-      } catch (e) { /* ignore */ }
+        setQueueError(false);
+      } catch (e) { setQueueError(true); }
     }
     fetchCounts();
     const iv = setInterval(fetchCounts, 15000);
@@ -67,7 +69,13 @@ export default function AppShell({ children }) {
 
           {/* Center: Queue Status */}
           <div className="hidden md:flex items-center gap-3 text-sm">
-            {totalActive > 0 && (
+            {queueError && (
+              <div className="flex items-center gap-1.5 bg-red-500/20 rounded-lg px-3 py-1.5 text-xs">
+                <span className="w-2 h-2 rounded-full bg-red-400" />
+                <span className="text-red-200 font-medium">Queue unavailable</span>
+              </div>
+            )}
+            {!queueError && totalActive > 0 && (
               <div className="flex items-center gap-3 bg-white/10 rounded-lg px-3 py-1.5">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -85,7 +93,7 @@ export default function AppShell({ children }) {
                 )}
               </div>
             )}
-            {totalActive === 0 && (
+            {!queueError && totalActive === 0 && (
               <div className="flex items-center gap-2 bg-white/10 rounded-lg px-3 py-1.5 text-xs opacity-80">
                 <span className="w-2 h-2 rounded-full bg-gray-400" />
                 No active encounters

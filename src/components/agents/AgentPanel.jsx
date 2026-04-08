@@ -12,8 +12,7 @@ import {
   Play, Loader2, AlertTriangle, Zap, Phone, UserCheck,
   Stethoscope, Heart, User
 } from 'lucide-react';
-
-const API_BASE = '/api';
+import api from '../../api/client';
 
 // All 9 agents with metadata
 const AGENT_META = {
@@ -471,13 +470,7 @@ export default function AgentPanel({ encounterId, patientId }) {
     setRunning(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/agents/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ encounter_id: encounterId, patient_id: patientId })
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Pipeline failed');
-      const data = await res.json();
+      const data = await api.runAgentPipeline({ encounter_id: encounterId, patient_id: patientId });
       setPipelineResult(data.results || {});
       setTotalTime(data.totalTimeMs);
       setExpandedAgents(new Set(Object.keys(data.results || {})));
@@ -491,9 +484,7 @@ export default function AgentPanel({ encounterId, patientId }) {
     setRunning(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/agents/briefing/${patientId}${encounterId ? '?encounter_id=' + encounterId : ''}`);
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Briefing failed');
-      const data = await res.json();
+      const data = await api.getAgentBriefing(patientId, encounterId);
       setPreVisitResults(prev => ({ ...prev, front_desk: data }));
       setExpandedAgents(prev => new Set([...prev, 'front_desk']));
     } catch (err) { setError(err.message); }
@@ -506,13 +497,7 @@ export default function AgentPanel({ encounterId, patientId }) {
     setRunning(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/agents/ma`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patient_id: patientId, encounter_id: encounterId, request_type: 'pre_visit_labs' })
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'MA labs failed');
-      const data = await res.json();
+      const data = await api.runMAAgent({ patient_id: patientId, encounter_id: encounterId, request_type: 'pre_visit_labs' });
       setPreVisitResults(prev => ({ ...prev, ma: data }));
       setExpandedAgents(prev => new Set([...prev, 'ma']));
     } catch (err) { setError(err.message); }

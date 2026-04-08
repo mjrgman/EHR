@@ -15,6 +15,43 @@
 
 const { BaseAgent } = require('./base-agent');
 
+// Drug class cross-reactivity map (A-H3)
+const CROSS_REACTIVITY = {
+  'penicillin': ['amoxicillin', 'ampicillin', 'piperacillin', 'nafcillin', 'oxacillin', 'dicloxacillin'],
+  'sulfa': ['sulfamethoxazole', 'sulfasalazine', 'sulfadiazine', 'trimethoprim-sulfamethoxazole', 'bactrim', 'septra'],
+  'cephalosporin': ['cephalexin', 'cefazolin', 'ceftriaxone', 'cefdinir', 'cefepime', 'cefuroxime'],
+  'nsaid': ['ibuprofen', 'naproxen', 'meloxicam', 'ketorolac', 'diclofenac', 'indomethacin', 'celecoxib'],
+  'statin': ['atorvastatin', 'rosuvastatin', 'simvastatin', 'pravastatin', 'lovastatin', 'fluvastatin'],
+  'ace inhibitor': ['lisinopril', 'enalapril', 'ramipril', 'benazepril', 'captopril', 'fosinopril', 'quinapril'],
+  'opioid': ['morphine', 'oxycodone', 'hydrocodone', 'fentanyl', 'codeine', 'tramadol', 'hydromorphone', 'methadone'],
+};
+
+/**
+ * Check if a medication triggers a cross-reactivity alert for a given allergen.
+ * Handles both directions: allergen is a class (flag members) and allergen is a member (flag class + siblings).
+ * @param {string} medName - Medication name (lowercase)
+ * @param {string} allergen - Documented allergen (lowercase)
+ * @returns {string|null} Cross-reactivity explanation, or null if none
+ */
+function checkCrossReactivity(medName, allergen) {
+  for (const [drugClass, members] of Object.entries(CROSS_REACTIVITY)) {
+    const allergenIsClass = allergen === drugClass;
+    const allergenIsMember = members.includes(allergen);
+    const medIsClass = medName === drugClass;
+    const medIsMember = members.includes(medName);
+
+    // Allergen is the class name → flag any member drug
+    if (allergenIsClass && (medIsMember || medIsClass)) {
+      return `${medName} belongs to ${drugClass} class (documented allergy: ${allergen})`;
+    }
+    // Allergen is a member → flag the class and other members
+    if (allergenIsMember && (medIsMember || medIsClass)) {
+      return `${medName} cross-reacts with ${allergen} (both in ${drugClass} class)`;
+    }
+  }
+  return null;
+}
+
 class OrdersAgent extends BaseAgent {
   constructor(options = {}) {
     super('orders', {
@@ -299,13 +336,32 @@ class OrdersAgent extends BaseAgent {
 
     for (const rx of prescriptions) {
       const medLower = rx.medication_name.toLowerCase();
-      const allergyMatch = allergies.find(a => medLower.includes(a) || a.includes(medLower));
+      // Direct substring match (original logic)
+      const directMatch = allergies.find(a => medLower.includes(a) || a.includes(medLower));
+      // Cross-reactivity check (A-H3)
+      let crossMatch = null;
+      if (!directMatch) {
+        for (const allergen of allergies) {
+          const crossResult = checkCrossReactivity(medLower, allergen);
+          if (crossResult) {
+            crossMatch = crossResult;
+            break;
+          }
+        }
+      }
 
-      if (allergyMatch) {
+      if (directMatch) {
         warnings.push({
           type: 'allergy_conflict',
           severity: 'high',
-          message: `ALLERGY ALERT: ${rx.medication_name} conflicts with documented allergy to ${allergyMatch}`,
+          message: `ALLERGY ALERT: ${rx.medication_name} conflicts with documented allergy to ${directMatch}`,
+          order: rx
+        });
+      } else if (crossMatch) {
+        warnings.push({
+          type: 'allergy_cross_reactivity',
+          severity: 'high',
+          message: `CROSS-REACTIVITY ALERT: ${crossMatch}`,
           order: rx
         });
       } else {

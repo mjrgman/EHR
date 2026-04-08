@@ -6,7 +6,7 @@ export default function AllergyBadges({ allergies = [] }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {allergies.map((a, i) => (
-        <Badge key={i} variant="urgent">&#x26A0; {a.allergen}{a.reaction ? ` (${a.reaction})` : ''}</Badge>
+        <Badge key={a.id || a.allergen || i} variant="urgent">&#x26A0; {a.allergen}{a.reaction ? ` (${a.reaction})` : ''}</Badge>
       ))}
     </div>
   );

@@ -30,6 +30,16 @@ function toMedicationDisplayName(value) {
     .join(' ');
 }
 
+function validateExtractionResponse(parsed) {
+  if (typeof parsed !== 'object' || parsed === null) return false;
+  // Ensure no unexpected database-mutation fields
+  const dangerousKeys = ['patient_id', 'encounter_id', 'id', 'user_id', 'role'];
+  for (const key of dangerousKeys) {
+    if (key in parsed) delete parsed[key]; // Strip dangerous fields
+  }
+  return true;
+}
+
 function getMode() {
   return ANTHROPIC_API_KEY && AI_MODE === 'api' ? 'api' : 'mock';
 }
@@ -56,12 +66,20 @@ function getAnthropicClient() {
  */
 async function callClaude(system, user, model = 'claude-haiku-4-5-20251001') {
   const client = getAnthropicClient();
-  const message = await client.messages.create({
+  const AI_TIMEOUT_MS = 30000; // 30 second timeout
+
+  const apiCall = client.messages.create({
     model,
     max_tokens: 4096,
     system,
     messages: [{ role: 'user', content: user }],
   });
+
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('AI request timed out after 30 seconds')), AI_TIMEOUT_MS);
+  });
+
+  const message = await Promise.race([apiCall, timeoutPromise]);
   return message.content[0].type === 'text' ? message.content[0].text : '';
 }
 
@@ -614,7 +632,9 @@ async function extractClinicalData(transcript, patient) {
   if (isClaudeEnabled()) {
     return _claudeExtractClinicalData(transcript, patient);
   }
-  return {
+
+  // Mock mode: pattern-matching extraction with unified count summary
+  const extracted = {
     vitals: extractVitals(transcript),
     medications: extractMedications(transcript),
     problems: extractProblems(transcript),
@@ -622,6 +642,27 @@ async function extractClinicalData(transcript, patient) {
     imaging: extractImagingOrders(transcript),
     ros: extractROS(transcript),
     physical_exam: extractPhysicalExam(transcript)
+  };
+
+  // Add unified extraction count summary
+  const counts = {
+    vitals_fields: Object.values(extracted.vitals).filter(v => v !== null && v !== undefined).length,
+    medications: Array.isArray(extracted.medications) ? extracted.medications.length : 0,
+    problems: Array.isArray(extracted.problems) ? extracted.problems.length : 0,
+    lab_orders: Array.isArray(extracted.labs) ? extracted.labs.length : 0,
+    imaging_orders: Array.isArray(extracted.imaging) ? extracted.imaging.length : 0,
+    ros_items: Object.values(extracted.ros).filter(v => v !== null && v !== undefined).length,
+    exam_items: Object.values(extracted.physical_exam).filter(v => v !== null && v !== undefined).length
+  };
+
+  const totalFields = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  return {
+    extracted,
+    extraction_summary: {
+      total_fields: totalFields,
+      counts
+    }
   };
 }
 
@@ -690,8 +731,12 @@ Rules:
     // Strip markdown code fences if present
     const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
     const parsed = JSON.parse(cleaned);
+
+    // Validate and sanitize: strip dangerous fields that could mutate database state
+    validateExtractionResponse(parsed);
+
     // Normalize nulls to expected types
-    return {
+    const extracted = {
       vitals: parsed.vitals || {},
       medications: parsed.medications || [],
       problems: parsed.problems || [],
@@ -700,10 +745,31 @@ Rules:
       ros: parsed.ros || {},
       physical_exam: parsed.physical_exam || {}
     };
+
+    // Add extraction summary
+    const counts = {
+      vitals_fields: Object.values(extracted.vitals).filter(v => v !== null && v !== undefined).length,
+      medications: Array.isArray(extracted.medications) ? extracted.medications.length : 0,
+      problems: Array.isArray(extracted.problems) ? extracted.problems.length : 0,
+      lab_orders: Array.isArray(extracted.labs) ? extracted.labs.length : 0,
+      imaging_orders: Array.isArray(extracted.imaging) ? extracted.imaging.length : 0,
+      ros_items: Object.values(extracted.ros).filter(v => v !== null && v !== undefined).length,
+      exam_items: Object.values(extracted.physical_exam).filter(v => v !== null && v !== undefined).length
+    };
+
+    const totalFields = Object.values(counts).reduce((a, b) => a + b, 0);
+
+    return {
+      extracted,
+      extraction_summary: {
+        total_fields: totalFields,
+        counts
+      }
+    };
   } catch (err) {
     // Fallback to pattern matching if Claude fails
     console.error('[AI] Claude extraction failed, falling back to pattern matching:', err.message);
-    return {
+    const extracted = {
       vitals: extractVitals(transcript),
       medications: extractMedications(transcript),
       problems: extractProblems(transcript),
@@ -711,6 +777,26 @@ Rules:
       imaging: extractImagingOrders(transcript),
       ros: extractROS(transcript),
       physical_exam: extractPhysicalExam(transcript)
+    };
+
+    const counts = {
+      vitals_fields: Object.values(extracted.vitals).filter(v => v !== null && v !== undefined).length,
+      medications: Array.isArray(extracted.medications) ? extracted.medications.length : 0,
+      problems: Array.isArray(extracted.problems) ? extracted.problems.length : 0,
+      lab_orders: Array.isArray(extracted.labs) ? extracted.labs.length : 0,
+      imaging_orders: Array.isArray(extracted.imaging) ? extracted.imaging.length : 0,
+      ros_items: Object.values(extracted.ros).filter(v => v !== null && v !== undefined).length,
+      exam_items: Object.values(extracted.physical_exam).filter(v => v !== null && v !== undefined).length
+    };
+
+    const totalFields = Object.values(counts).reduce((a, b) => a + b, 0);
+
+    return {
+      extracted,
+      extraction_summary: {
+        total_fields: totalFields,
+        counts
+      }
     };
   }
 }

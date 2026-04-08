@@ -33,7 +33,7 @@ export function useSpeechRecognition(options = {}) {
       };
 
       recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
+        console.error('Speech recognition error:', event.error || 'unknown');
         if (event.error !== 'no-speech') setIsListening(false);
       };
 

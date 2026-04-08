@@ -1,6 +1,57 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+
+// ==========================================
+// PHI ENCRYPTION HELPERS
+// ==========================================
+
+const PHI_FIELDS = ['first_name', 'last_name', 'dob', 'phone', 'email', 'address_line1', 'address_line2', 'city', 'state', 'zip', 'insurance_id', 'ssn'];
+
+function encryptPatientData(data) {
+  try {
+    const phiEncryption = require('./security/phi-encryption');
+    if (!process.env.PHI_ENCRYPTION_KEY) return data; // Skip if no key
+    const encrypted = { ...data };
+    for (const field of PHI_FIELDS) {
+      if (encrypted[field]) {
+        encrypted[field] = phiEncryption.encrypt(String(encrypted[field]));
+      }
+    }
+    return encrypted;
+  } catch (err) {
+    console.warn('[DB] PHI encryption unavailable, storing plaintext:', err.message);
+    return data;
+  }
+}
+
+function decryptPatientData(data) {
+  if (!data) return data;
+  try {
+    const phiEncryption = require('./security/phi-encryption');
+    if (!process.env.PHI_ENCRYPTION_KEY) return data; // Skip if no key
+    const decrypted = { ...data };
+    for (const field of PHI_FIELDS) {
+      if (decrypted[field]) {
+        try {
+          decrypted[field] = phiEncryption.decrypt(decrypted[field]);
+        } catch (e) {
+          // Field may already be plaintext — leave as-is
+        }
+      }
+    }
+    return decrypted;
+  } catch (err) {
+    console.warn('[DB] PHI decryption unavailable, returning as-is:', err.message);
+    return data;
+  }
+}
+
+function decryptPatientRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map(row => decryptPatientData(row));
+}
 
 const DB_PATH = process.env.DATABASE_PATH || path.join(__dirname, '../data/mjr-ehr.db');
 const DATA_DIR = path.dirname(DB_PATH);
@@ -14,8 +65,9 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
   else console.log('Connected to SQLite database at:', DB_PATH);
 });
 
-db.run('PRAGMA journal_mode = WAL');
-db.run('PRAGMA foreign_keys = ON');
+// Await PRAGMAs via promisified interface
+dbRun('PRAGMA journal_mode = WAL').catch(err => console.error('PRAGMA WAL error:', err.message));
+dbRun('PRAGMA foreign_keys = ON').catch(err => console.error('PRAGMA FK error:', err.message));
 
 // ==========================================
 // PROMISIFIED DB HELPERS
@@ -471,7 +523,7 @@ function initializeDatabase() {
 
 function generateMRN() {
   const year = new Date().getFullYear();
-  const random = Math.floor(Math.random() * 90000) + 10000;
+  const random = crypto.randomInt(100000, 999999); // 6 digits, crypto-secure
   return `${year}-${random}`;
 }
 
@@ -490,13 +542,12 @@ function calculateAge(dob) {
 // SEED DATA: CLINICAL RULES (25 rules)
 // ==========================================
 
-function loadClinicalRules() {
-  return new Promise(async (resolve, reject) => {
+async function loadClinicalRules() {
     try {
       const existing = await dbGet('SELECT COUNT(*) as count FROM clinical_rules');
       if (existing.count > 0) {
         console.log('Clinical rules already loaded');
-        return resolve();
+        return;
       }
 
       console.log('Loading clinical rules...');
@@ -1019,11 +1070,9 @@ function loadClinicalRules() {
       }
 
       console.log(`Loaded ${rules.length} clinical rules`);
-      resolve();
     } catch (err) {
-      reject(err);
+      throw err;
     }
-  });
 }
 
 // ==========================================
@@ -1131,19 +1180,32 @@ function loadDemoData() {
 
 const db_helpers = {
   // --- Patients ---
-  getAllPatients: () => dbAll('SELECT * FROM patients ORDER BY last_name, first_name'),
-  getPatientById: (id) => dbGet('SELECT * FROM patients WHERE id = ?', [id]),
+  getAllPatients: () => dbAll('SELECT * FROM patients ORDER BY last_name, first_name').then(rows => decryptPatientRows(rows)),
+  getPatientById: (id) => dbGet('SELECT * FROM patients WHERE id = ?', [id]).then(row => decryptPatientData(row)),
 
-  createPatient: (data) => {
-    const mrn = generateMRN();
+  createPatient: async (data) => {
+    const encrypted = encryptPatientData(data);
     const { first_name, middle_name, last_name, dob, sex, phone, email,
-            address_line1, address_line2, city, state, zip, insurance_carrier, insurance_id } = data;
-    return dbRun(`INSERT INTO patients (mrn,first_name,middle_name,last_name,dob,sex,phone,email,
-                  address_line1,address_line2,city,state,zip,insurance_carrier,insurance_id)
-                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [mrn,first_name,middle_name,last_name,dob,sex,phone,email,
-       address_line1,address_line2,city,state,zip,insurance_carrier,insurance_id])
-      .then(r => ({ id: r.lastID, mrn }));
+            address_line1, address_line2, city, state, zip, insurance_carrier, insurance_id } = encrypted;
+
+    const MAX_MRN_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_MRN_RETRIES; attempt++) {
+      const mrn = generateMRN();
+      try {
+        const r = await dbRun(`INSERT INTO patients (mrn,first_name,middle_name,last_name,dob,sex,phone,email,
+                      address_line1,address_line2,city,state,zip,insurance_carrier,insurance_id)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [mrn,first_name,middle_name,last_name,dob,sex,phone,email,
+           address_line1,address_line2,city,state,zip,insurance_carrier,insurance_id]);
+        return { id: r.lastID, mrn };
+      } catch (err) {
+        if (err.message && err.message.includes('UNIQUE') && attempt < MAX_MRN_RETRIES - 1) {
+          console.warn(`[DB] MRN collision (${mrn}), retrying... (attempt ${attempt + 1})`);
+          continue;
+        }
+        throw err;
+      }
+    }
   },
 
   // --- Problems ---
@@ -1258,9 +1320,11 @@ const db_helpers = {
   getWorkflowState: (encounterId) => dbGet('SELECT * FROM workflow_state WHERE encounter_id = ?', [encounterId]),
 
   updateWorkflowState: (encounterId, updates) => {
+    const ALLOWED_WORKFLOW_COLUMNS = ['current_state', 'previous_state', 'transitioned_by', 'transition_reason', 'updated_at'];
     const fields = [];
     const params = [];
     for (const [key, value] of Object.entries(updates)) {
+      if (!ALLOWED_WORKFLOW_COLUMNS.includes(key)) continue; // Skip unknown columns
       fields.push(`${key} = ?`);
       params.push(value);
     }
@@ -1276,7 +1340,8 @@ const db_helpers = {
                   JOIN patients p ON ws.patient_id = p.id
                   JOIN encounters e ON ws.encounter_id = e.id
                   WHERE ws.current_state = ?
-                  ORDER BY ws.created_at`, [state]);
+                  ORDER BY ws.created_at`, [state])
+      .then(rows => decryptPatientRows(rows));
   },
 
   getAllWorkflows: () => {
@@ -1284,7 +1349,8 @@ const db_helpers = {
                   FROM workflow_state ws
                   JOIN patients p ON ws.patient_id = p.id
                   JOIN encounters e ON ws.encounter_id = e.id
-                  ORDER BY ws.created_at DESC`);
+                  ORDER BY ws.created_at DESC`)
+      .then(rows => decryptPatientRows(rows));
   },
 
   // --- CDS Suggestions ---
@@ -1413,7 +1479,7 @@ const scheduling_helpers = {
          WHERE a.appointment_date = ? AND a.provider_name = ?
          ORDER BY a.appointment_time ASC`,
         [date, provider_name]
-      );
+      ).then(rows => decryptPatientRows(rows));
     }
     return dbAll(
       `SELECT a.*, p.first_name, p.last_name, p.dob, p.mrn
@@ -1421,7 +1487,7 @@ const scheduling_helpers = {
        WHERE a.appointment_date = ?
        ORDER BY a.appointment_time ASC`,
       [date]
-    );
+    ).then(rows => decryptPatientRows(rows));
   },
 
   getAppointmentsByPatient: (patient_id) =>

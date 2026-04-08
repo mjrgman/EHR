@@ -6,7 +6,7 @@
 # STAGE 1: BUILDER
 # ==========================================
 
-FROM node:22-alpine AS builder
+FROM node:20-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache \
@@ -33,7 +33,7 @@ RUN npm run build
 # STAGE 2: RUNTIME
 # ==========================================
 
-FROM node:22-alpine
+FROM node:20-alpine
 
 # Set working directory
 WORKDIR /app
@@ -73,7 +73,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Set environment variables with defaults
 ENV NODE_ENV=production \
     PORT=3000 \
-    DATABASE_PATH=/data/mjr-ehr.db
+    DATABASE_PATH=/data/agentic-ehr.db
 
 # Volume for persistent SQLite database
 VOLUME ["/data"]

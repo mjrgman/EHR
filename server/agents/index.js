@@ -44,50 +44,63 @@ const { QualityAgent } = require('./quality-agent');
 const { MODULE_REGISTRY, listModules } = require('./module-registry');
 
 // ==========================================
-// SINGLETON ORCHESTRATOR
+// LAZY-INITIALIZED ORCHESTRATOR
 // ==========================================
 
-const orchestrator = new AgentOrchestrator();
+let orchestrator = null;
 
-// Register all 9 agents
-// Pre-visit agents (no encounter dependencies — run on-demand)
-orchestrator
-  .register(new PhoneTriageAgent())
-  .register(new FrontDeskAgent())
-  .register(new MAAgent())
-  .register(new PhysicianAgent());
+/**
+ * Get or create the orchestrator singleton.
+ * Lazy initialization ensures the db reference is available before construction.
+ * @param {Object} db - Database connection (dbRun, dbGet, dbAll). Required on first call.
+ * @returns {AgentOrchestrator}
+ */
+function getOrchestrator(db) {
+  if (!orchestrator) {
+    if (!db) {
+      throw new Error('AgentOrchestrator requires a db parameter on first initialization');
+    }
+    orchestrator = new AgentOrchestrator(db);
 
-// Encounter pipeline agents (dependency-ordered)
-orchestrator
-  .register(new ScribeAgent())       // Phase 1 — no deps
-  .register(new CDSAgent())          // Phase 1 — no deps
-  .register(new OrdersAgent())       // Phase 2 — depends on scribe + cds
-  .register(new CodingAgent())       // Phase 2 — depends on scribe + cds
-  .register(new QualityAgent());     // Phase 3 — depends on all above
+    // Register all 9 agents
+    // Pre-visit agents (no encounter dependencies — run on-demand)
+    orchestrator
+      .register(new PhoneTriageAgent())
+      .register(new FrontDeskAgent())
+      .register(new MAAgent())
+      .register(new PhysicianAgent());
 
-// ==========================================
-// EVENT LOGGING
-// ==========================================
+    // Encounter pipeline agents (dependency-ordered)
+    orchestrator
+      .register(new ScribeAgent())       // Phase 1 — no deps
+      .register(new CDSAgent())          // Phase 1 — no deps
+      .register(new OrdersAgent())       // Phase 2 — depends on scribe + cds
+      .register(new CodingAgent())       // Phase 2 — depends on scribe + cds
+      .register(new QualityAgent());     // Phase 3 — depends on all above
 
-orchestrator.on('pipeline:start', (data) => {
-  console.log(`[Agents] Pipeline started for encounter ${data.encounterId}`);
-});
+    // Event logging
+    orchestrator.on('pipeline:start', (data) => {
+      console.log(`[Agents] Pipeline started for encounter ${data.encounterId}`);
+    });
 
-orchestrator.on('pipeline:phase', (data) => {
-  console.log(`[Agents] Phase ${data.phase}/${data.totalPhases}: ${data.agents.join(', ')}`);
-});
+    orchestrator.on('pipeline:phase', (data) => {
+      console.log(`[Agents] Phase ${data.phase}/${data.totalPhases}: ${data.agents.join(', ')}`);
+    });
 
-orchestrator.on('agent:complete', (data) => {
-  console.log(`[Agents] ${data.agent} completed in ${data.executionTimeMs}ms`);
-});
+    orchestrator.on('agent:complete', (data) => {
+      console.log(`[Agents] ${data.agent} completed in ${data.executionTimeMs}ms`);
+    });
 
-orchestrator.on('agent:error', (data) => {
-  console.error(`[Agents] ${data.agent} error: ${data.error}`);
-});
+    orchestrator.on('agent:error', (data) => {
+      console.error(`[Agents] ${data.agent} error: ${data.error}`);
+    });
 
-orchestrator.on('pipeline:complete', (data) => {
-  console.log(`[Agents] Pipeline complete: ${data.totalTimeMs}ms total, ${Object.keys(data.results).length} agents`);
-});
+    orchestrator.on('pipeline:complete', (data) => {
+      console.log(`[Agents] Pipeline complete: ${data.totalTimeMs}ms total, ${Object.keys(data.results).length} agents`);
+    });
+  }
+  return orchestrator;
+}
 
 // ==========================================
 // CONTEXT BUILDER
@@ -151,30 +164,34 @@ async function buildContext(patientId, encounterId, db) {
  * Run the full encounter pipeline (Scribe → CDS → Orders → Coding → Quality).
  */
 async function runEncounterPipeline(patientId, encounterId, db, options = {}) {
+  const orch = getOrchestrator(db);
   const context = await buildContext(patientId, encounterId, db);
   // Only run encounter agents by default
   const encounterAgents = ['scribe', 'cds', 'orders', 'coding', 'quality'];
-  return orchestrator.runPipeline(context, { only: encounterAgents, ...options });
+  return orch.runPipeline(context, { only: encounterAgents, ...options });
 }
 
 /**
  * Run the full pipeline including all agents.
  */
 async function runPipeline(patientId, encounterId, db, options = {}) {
+  const orch = getOrchestrator(db);
   const context = await buildContext(patientId, encounterId, db);
-  return orchestrator.runPipeline(context, options);
+  return orch.runPipeline(context, options);
 }
 
 /**
  * Run a single agent with fresh context.
  */
 async function runAgent(agentName, patientId, encounterId, db, existingResults = {}) {
+  const orch = getOrchestrator(db);
   const context = await buildContext(patientId, encounterId, db);
-  return orchestrator.runAgent(agentName, context, existingResults);
+  return orch.runAgent(agentName, context, existingResults);
 }
 
 module.exports = {
-  orchestrator,
+  getOrchestrator,
+  get orchestrator() { return orchestrator; }, // Backward compat — may be null before first getOrchestrator(db) call
   buildContext,
   runPipeline,
   runEncounterPipeline,

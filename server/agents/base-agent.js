@@ -241,9 +241,16 @@ class BaseAgent extends EventEmitter {
     this.auditTrail.push(entry);
     this.emit('audit', entry);
 
-    // Keep in-memory trail manageable (last 500 entries)
-    if (this.auditTrail.length > 500) {
-      this.auditTrail = this.auditTrail.slice(-500);
+    // Keep in-memory trail manageable (last 1000 entries) (A-M2)
+    if (this.auditTrail.length > 1000) {
+      const droppedCount = this.auditTrail.length - 1000;
+      this.emit('audit:truncated', {
+        agent: this.name,
+        droppedCount,
+        message: `Audit trail truncated: ${droppedCount} oldest entries dropped (in-memory limit 1000)`
+      });
+      console.warn(`[${this.name}] Audit trail truncated: ${droppedCount} entries dropped`);
+      this.auditTrail = this.auditTrail.slice(-1000);
     }
 
     return entry;
@@ -558,5 +565,25 @@ class BaseAgent extends EventEmitter {
     return this.memory.getStats();
   }
 }
+
+/**
+ * Shared age calculator — available as static method and instance method (L1).
+ * @param {string} dob - Date of birth string
+ * @returns {number} Age in years, or 0 if dob is falsy
+ */
+BaseAgent._age = function(dob) {
+  if (!dob) return 0;
+  const birth = new Date(dob);
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const m = now.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
+  return age;
+};
+
+// Also available as instance method via prototype
+BaseAgent.prototype._age = function(dob) {
+  return BaseAgent._age(dob);
+};
 
 module.exports = { BaseAgent, AGENT_STATUS, AUTONOMY_TIER, SAFETY_LEVEL, ACTION_TYPE };

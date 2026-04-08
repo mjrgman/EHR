@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import { setAuditContext } from '../api/client';
 
 const AuthContext = createContext(null);
@@ -22,8 +22,12 @@ export function AuthProvider({ children }) {
     if (ROLES[role]) setCurrentRole(role);
   }, []);
 
+  const value = useMemo(() => ({
+    currentRole, providerName, roleConfig: ROLES[currentRole], switchRole, setProviderName, roles: ROLES
+  }), [currentRole, providerName, switchRole]);
+
   return (
-    <AuthContext.Provider value={{ currentRole, providerName, roleConfig: ROLES[currentRole], switchRole, setProviderName, roles: ROLES }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

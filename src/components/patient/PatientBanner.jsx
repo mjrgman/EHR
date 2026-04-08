@@ -32,7 +32,7 @@ export default function PatientBanner({ patient, compact = false }) {
         {allergies.length > 0 && (
           <div className="flex items-center gap-1.5">
             <span className="text-red-600 text-sm font-medium">&#x26A0; Allergies:</span>
-            {allergies.map((a, i) => <Badge key={i} variant="urgent">{a.allergen}</Badge>)}
+            {allergies.map((a, i) => <Badge key={a.id || a.allergen || i} variant="urgent">{a.allergen}</Badge>)}
           </div>
         )}
       </div>

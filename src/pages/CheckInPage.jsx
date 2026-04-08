@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api from '../api/client';
+import api, { safeLog } from '../api/client';
 import { usePatient } from '../hooks/usePatient';
 import { useWorkflow } from '../hooks/useWorkflow';
 import Card, { CardHeader, CardBody } from '../components/common/Card';
@@ -73,7 +73,7 @@ export default function CheckInPage() {
       } catch (err) {
         if (!cancelled) {
           toast.error('Failed to load encounter');
-          console.error(err);
+          safeLog.error('CheckIn error:', err);
         }
       } finally {
         if (!cancelled) setEncounterLoading(false);
@@ -119,7 +119,7 @@ export default function CheckInPage() {
       navigate(`/ma/${encounterId}`);
     } catch (err) {
       toast.error('Check-in failed: ' + (err.message || 'Unknown error'));
-      console.error(err);
+      safeLog.error('Check-in failed:', err);
     } finally {
       setSubmitting(false);
     }
