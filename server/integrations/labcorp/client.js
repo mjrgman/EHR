@@ -26,6 +26,9 @@
 
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const { URL } = require('url');
 const parser = require('./parser');
 
 const LABCORP_MODE = process.env.LABCORP_MODE || 'mock';
@@ -60,9 +63,31 @@ function getStatus() {
 // ==========================================
 
 class LabCorpClient {
-  constructor({ mode = 'mock' } = {}) {
+  constructor({
+    mode = 'mock',
+    // API-mode options (ignored in mock mode)
+    baseUrl = null,
+    tokenUrl = null,
+    clientId = null,
+    clientSecret = null,
+    db = null,
+    userId = null,
+    timeoutMs = LABCORP_TIMEOUT_MS,
+  } = {}) {
     this.mode = mode;
     this.pendingOrders = new Map(); // in-memory tracking (Phase 2b will persist to DB)
+    // API-mode wiring — all null-safe so mock mode needs none of them.
+    // Construction is cheap; instantiate one per-user or per-request and
+    // discard, rather than relying on the process-wide `getClient()`
+    // singleton, whenever you need API mode. The singleton remains the
+    // right default for mock-mode usage.
+    this.baseUrl = baseUrl || process.env.LABCORP_SANDBOX_URL || null;
+    this.tokenUrl = tokenUrl || process.env.LABCORP_TOKEN_URL || null;
+    this.clientId = clientId || process.env.LABCORP_CLIENT_ID || null;
+    this.clientSecret = clientSecret || process.env.LABCORP_CLIENT_SECRET || null;
+    this.db = db;
+    this.userId = userId;
+    this.timeoutMs = timeoutMs;
   }
 
   // ------- Public API -------
@@ -206,37 +231,212 @@ class LabCorpClient {
     return result;
   }
 
-  // ------- API implementation (Phase 2b will complete this) -------
+  // ------- API implementation (Phase 2b) -------
 
-  async _submitOrderApi(_order) {
-    const err = new Error('LabCorpClient API mode not yet implemented — set LABCORP_MODE=mock. Real OAuth + endpoints land in Phase 2b.');
-    _lastError = { message: err.message, at: new Date().toISOString() };
-    throw err;
+  /**
+   * Submit a lab order to the real LabCorp Link API.
+   *
+   * Flow:
+   *   1. Load stored OAuth2 tokens for this.userId (throws if missing)
+   *   2. POST JSON body to `${baseUrl}/api/v1/orders` with Bearer auth
+   *   3. On 401, refresh tokens, persist, retry once (prevents infinite loops)
+   *   4. On success, return the normalized order response
+   *
+   * Callers must supply `db` + `userId` at construction so token load/store
+   * is scoped to the correct user. Production code wires this per-request
+   * from the authenticated session; tests wire it from the test harness.
+   */
+  async _submitOrderApi(order) {
+    const response = await this._authorizedRequest({
+      method: 'POST',
+      path: '/api/v1/orders',
+      body: JSON.stringify(order),
+      contentType: 'application/json',
+      label: 'submitOrder',
+    });
+    let parsed;
+    try {
+      parsed = JSON.parse(response.body);
+    } catch (err) {
+      throw new Error(`LabCorp submitOrder: failed to parse response JSON: ${err.message}`);
+    }
+    // Track locally so pollPendingOrders() still works in API mode
+    if (parsed.externalOrderId) {
+      this.pendingOrders.set(parsed.externalOrderId, {
+        ...order,
+        externalOrderId: parsed.externalOrderId,
+        submittedAt: parsed.submittedAt || new Date().toISOString(),
+        status: parsed.status || 'submitted',
+      });
+    }
+    return {
+      ok: true,
+      externalOrderId: parsed.externalOrderId,
+      status: parsed.status || 'submitted',
+      raw: parsed,
+    };
   }
 
-  async _fetchResultsApi(_externalOrderId) {
-    const err = new Error('LabCorpClient API mode not yet implemented — set LABCORP_MODE=mock. Real OAuth + endpoints land in Phase 2b.');
-    _lastError = { message: err.message, at: new Date().toISOString() };
-    throw err;
+  /**
+   * Fetch a result by external order ID. Returns the parser output shape,
+   * so callers (LabSynthesisAgent in Chunk 6) can treat API-mode and
+   * mock-mode results identically.
+   */
+  async _fetchResultsApi(externalOrderId) {
+    const response = await this._authorizedRequest({
+      method: 'GET',
+      path: `/api/v1/orders/${encodeURIComponent(externalOrderId)}/results`,
+      label: 'fetchResults',
+    });
+    // LabCorp serves XML by default, PDF on request. We pass the raw body
+    // buffer through the same parser used by mock mode so downstream code
+    // sees a single result shape regardless of mode.
+    const contentType = response.headers['content-type'] || '';
+    let result;
+    if (contentType.includes('application/pdf')) {
+      result = await parser.parsePdfResult(response.bodyBuffer);
+    } else {
+      result = parser.parseXmlResult(response.bodyBuffer);
+    }
+    result.externalOrderId = externalOrderId;
+    if (!result.labOrderId) result.labOrderId = externalOrderId;
+    return result;
   }
 
   // ------- Shared helpers -------
 
   /**
-   * Shared helper for wrapping any API call in a 30s timeout, per the
-   * ai-client.js pattern. Phase 2b's real API calls will route through this.
+   * Authorized HTTP request against the LabCorp API with auto-refresh on 401.
    *
-   * @param {Promise} promise
-   * @returns {Promise}
+   * Responsibilities:
+   *   - Require `db` + `userId` so we can load/persist tokens
+   *   - Load tokens once; if none, throw a clear "not authorized" error
+   *   - Attach `Authorization: Bearer <access_token>` header
+   *   - On 401, call oauth.refreshAccessToken(), persist via storeTokens(),
+   *     then retry the request exactly once. This caps the retry depth at
+   *     1 so a perpetually-broken refresh loop cannot cascade.
+   *   - On any other non-2xx, throw with the body for diagnostics
+   *   - Return { status, headers, body (string), bodyBuffer } on success
+   *
+   * Defensive loading of `oauth` at call-time (rather than top-of-file)
+   * avoids a circular-require risk if oauth.js ever grows a dependency on
+   * client.js (doesn't today, but the lazy require keeps it safe).
    */
-  async _withTimeout(promise, label = 'labcorp_api') {
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(
-        () => reject(new Error(`${label} timed out after ${LABCORP_TIMEOUT_MS}ms`)),
-        LABCORP_TIMEOUT_MS
-      );
+  async _authorizedRequest({ method, path, body = null, contentType = null, label = 'labcorp_api' }) {
+    if (!this.db || !this.userId) {
+      throw new Error(`LabCorp ${label}: db + userId required for API mode`);
+    }
+    if (!this.baseUrl) {
+      throw new Error(`LabCorp ${label}: baseUrl required for API mode`);
+    }
+
+    const oauth = require('./oauth');
+    let tokens = await oauth.getTokens(this.db, this.userId);
+    if (!tokens) {
+      throw new Error(`LabCorp ${label}: not authorized — no tokens stored for user ${this.userId}. Run the OAuth2 flow first.`);
+    }
+
+    // First attempt
+    let response = await this._rawRequest({
+      method,
+      path,
+      body,
+      contentType,
+      accessToken: tokens.access_token,
+      label,
     });
-    return Promise.race([promise, timeoutPromise]);
+
+    // 401 → refresh + retry exactly once
+    if (response.status === 401) {
+      if (!this.tokenUrl || !this.clientId || !this.clientSecret) {
+        throw new Error(`LabCorp ${label}: received 401 but cannot refresh — tokenUrl/clientId/clientSecret missing`);
+      }
+      const refreshed = await oauth.refreshAccessToken({
+        tokenUrl: this.tokenUrl,
+        clientId: this.clientId,
+        clientSecret: this.clientSecret,
+        refreshToken: tokens.refresh_token,
+        timeoutMs: this.timeoutMs,
+      });
+      await oauth.storeTokens(this.db, this.userId, refreshed);
+      tokens = await oauth.getTokens(this.db, this.userId);
+      response = await this._rawRequest({
+        method,
+        path,
+        body,
+        contentType,
+        accessToken: tokens.access_token,
+        label,
+      });
+      // If still 401 after refresh, do NOT loop — fail loud
+      if (response.status === 401) {
+        throw new Error(`LabCorp ${label}: still 401 after refresh — stale grant?`);
+      }
+    }
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`LabCorp ${label}: HTTP ${response.status} — ${response.body}`);
+    }
+    return response;
+  }
+
+  /**
+   * Raw HTTP request without any token logic. Returns a normalized response
+   * so callers don't have to know http vs https. Includes a 30s timeout
+   * via `req.setTimeout()` matching the oauth.js pattern.
+   */
+  _rawRequest({ method, path, body, contentType, accessToken, label }) {
+    return new Promise((resolve, reject) => {
+      let url;
+      try {
+        url = new URL(this.baseUrl + path);
+      } catch (err) {
+        reject(new Error(`LabCorp ${label}: invalid URL — ${err.message}`));
+        return;
+      }
+      const lib = url.protocol === 'https:' ? https : http;
+      const headers = {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json, application/xml, application/pdf',
+      };
+      if (body) {
+        headers['Content-Type'] = contentType || 'application/json';
+        headers['Content-Length'] = Buffer.byteLength(body);
+      }
+      const options = {
+        method,
+        hostname: url.hostname,
+        port: url.port || (url.protocol === 'https:' ? 443 : 80),
+        path: url.pathname + (url.search || ''),
+        headers,
+        timeout: this.timeoutMs,
+      };
+
+      const req = lib.request(options, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => { chunks.push(chunk); });
+        res.on('end', () => {
+          const bodyBuffer = Buffer.concat(chunks);
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: bodyBuffer.toString('utf8'),
+            bodyBuffer,
+          });
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy(new Error(`LabCorp ${label}: request timed out after ${this.timeoutMs}ms`));
+      });
+      req.on('error', (err) => {
+        _lastError = { message: err.message, at: new Date().toISOString() };
+        reject(new Error(`LabCorp ${label}: ${err.message}`));
+      });
+
+      if (body) req.write(body);
+      req.end();
+    });
   }
 }
 

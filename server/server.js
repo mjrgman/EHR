@@ -22,6 +22,7 @@ const cdsHooksRouter = require('./integrations/cds-hooks');
 const eventBusRouter = require('./integrations/event-bus').router;
 const patientVoiceRouter = require('./integrations/patient-voice').router;
 const patientPortalRouter = require('./routes/patient-portal');
+const { mountLabCorpRoutes } = require('./routes/labcorp-routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -181,6 +182,17 @@ app.use('/api/scheduling', rbac.requireResourceAccess('encounters'));
 app.use('/api/webhooks', rbac.requireRole('admin'), eventBusRouter);
 app.use('/api/patient-portal', patientVoiceRouter);
 app.use('/api/patient-portal', patientPortalRouter);
+
+// LabCorp integration routes (Phase 2b — Chunk 5).
+// mountLabCorpRoutes registers:
+//   GET  /api/integrations/labcorp/status
+//   POST /api/integrations/labcorp/oauth/start
+//   GET  /api/integrations/labcorp/oauth/callback
+//   POST /api/orders/:id/submit-to-labcorp
+// All land under /api/* so auth.requireAuth above wraps them. The callback
+// endpoint tolerates a missing req.user because OAuth2 redirects don't
+// carry the app's JWT — it derives userId from the pending-state record.
+mountLabCorpRoutes(app, { db });
 
 // ==========================================
 // PATIENT ENDPOINTS

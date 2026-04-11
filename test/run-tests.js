@@ -2278,7 +2278,11 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
     assertEqual(results[1].ok, true);
   });
 
-  await test('LabCorp: client API mode throws explicit Phase 2b stub error', async () => {
+  await test('LabCorp: client API mode without db/userId throws clearly', async () => {
+    // Chunk 4 replaced the Phase-2b stub with real API behavior. Constructing
+    // an API-mode client without db/userId must still fail loud so callers
+    // get a diagnostic instead of a mystery 500. Full API behavior (auto-
+    // refresh, Bearer auth) is covered by the Chunk 4 tests in PHASE 19.
     const { LabCorpClient } = labcorpClientModule;
     const client = new LabCorpClient({ mode: 'api' });
     let threw = false;
@@ -2286,9 +2290,12 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
       await client.submitOrder({ patientId: 1, tests: ['CBC'] });
     } catch (err) {
       threw = true;
-      assert(/Phase 2b/.test(err.message), 'API mode error should mention Phase 2b');
+      assert(
+        /db.*userId/i.test(err.message) || /not authorized|baseUrl/i.test(err.message),
+        `API mode error should explain missing config, got: ${err.message}`
+      );
     }
-    assert(threw, 'API mode submitOrder should throw');
+    assert(threw, 'API mode submitOrder should throw without db/userId');
   });
 
   await test('LabCorp: client getStatus reports current mode and credential state', () => {
@@ -2307,6 +2314,1154 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
     // Should return a parser-shape result with ok=false
     assertEqual(results[0].ok, false);
   });
+
+  // ==========================================
+  // PHASE 19: LABCORP OAUTH2 + DB MIGRATION (Phase 2b)
+  // ==========================================
+
+  console.log('\n--- PHASE 19: LABCORP OAUTH2 + DB MIGRATION (Phase 2b) ---\n');
+
+  // Phase 19 setup: run migrations once so assertion tests see migrated state.
+  // The test harness loads `server/database.js` which creates base tables only;
+  // migration-managed schema (labcorp_tokens, lab_orders additions) is applied
+  // here so Phase 19 tests don't have to each call runMigrations individually.
+  // Idempotency of runMigrations makes this safe even though test #163 also
+  // calls it explicitly to verify the idempotency contract.
+  {
+    const migrations = require('../server/database-migrations');
+    await migrations.runMigrations(db.db);
+  }
+
+  await test('LabCorp 2b: labcorp_tokens table exists after migrations', async () => {
+    const tables = await db.dbAll("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
+    const names = tables.map(t => t.name);
+    assert(names.includes('labcorp_tokens'), 'labcorp_tokens table should exist');
+  });
+
+  await test('LabCorp 2b: labcorp_tokens has required columns for OAuth2 storage', async () => {
+    const columns = await db.dbAll("PRAGMA table_info(labcorp_tokens)");
+    const colNames = columns.map(c => c.name);
+    // Minimum viable OAuth2 token record
+    assert(colNames.includes('id'), 'id column required');
+    assert(colNames.includes('user_id'), 'user_id column required (FK to users)');
+    assert(colNames.includes('access_token_encrypted'), 'access_token_encrypted column required');
+    assert(colNames.includes('refresh_token_encrypted'), 'refresh_token_encrypted column required');
+    assert(colNames.includes('token_type'), 'token_type column required');
+    assert(colNames.includes('expires_at'), 'expires_at column required (for rotation)');
+    assert(colNames.includes('scope'), 'scope column required');
+    assert(colNames.includes('created_at'), 'created_at column required');
+    assert(colNames.includes('updated_at'), 'updated_at column required');
+    assert(colNames.includes('last_refresh_at'), 'last_refresh_at column required');
+  });
+
+  await test('LabCorp 2b: labcorp_tokens migration is idempotent', async () => {
+    // Running migrations twice on the same DB should not throw.
+    // This guards against CREATE TABLE without IF NOT EXISTS.
+    const migrations = require('../server/database-migrations');
+    await migrations.runMigrations(db.db);
+    await migrations.runMigrations(db.db);
+    // If we got here without throwing, the migration is idempotent
+    const tables = await db.dbAll("SELECT name FROM sqlite_master WHERE type='table' AND name='labcorp_tokens'");
+    assertEqual(tables.length, 1, 'labcorp_tokens should exist exactly once after double migration');
+  });
+
+  await test('LabCorp 2b: lab_orders has external_order_id column', async () => {
+    const columns = await db.dbAll("PRAGMA table_info(lab_orders)");
+    const colNames = columns.map(c => c.name);
+    assert(colNames.includes('external_order_id'), 'external_order_id column required on lab_orders');
+  });
+
+  await test('LabCorp 2b: lab_orders has labcorp_status column', async () => {
+    const columns = await db.dbAll("PRAGMA table_info(lab_orders)");
+    const colNames = columns.map(c => c.name);
+    assert(colNames.includes('labcorp_status'), 'labcorp_status column required on lab_orders');
+  });
+
+  await test('LabCorp 2b: lab_orders has labcorp_raw_pdf_path column', async () => {
+    const columns = await db.dbAll("PRAGMA table_info(lab_orders)");
+    const colNames = columns.map(c => c.name);
+    assert(colNames.includes('labcorp_raw_pdf_path'), 'labcorp_raw_pdf_path column required on lab_orders');
+  });
+
+  // ------------------------------------------
+  // OAuth2 pure helpers + token storage (Chunk 2)
+  // ------------------------------------------
+  // These tests exercise server/integrations/labcorp/oauth.js. PHI encryption
+  // must be active so storeTokens/getTokens produce encrypted rows — the Phase
+  // 19 block sets PHI_ENCRYPTION_KEY just long enough for this subsection so
+  // earlier tests run unchanged.
+  const _prevPhiKey = process.env.PHI_ENCRYPTION_KEY;
+  process.env.PHI_ENCRYPTION_KEY = 'test-phi-key-32chars-abcdefghijkl';
+
+  // Ensure a user row exists for the FK constraint on labcorp_tokens.user_id.
+  // We reuse the existing seed if present, otherwise insert one. The test DB
+  // is wiped on every run so an idempotent insert is fine.
+  let _oauthTestUserId;
+  {
+    const existing = await db.dbGet("SELECT id FROM users WHERE username = 'oauth-test-user'");
+    if (existing) {
+      _oauthTestUserId = existing.id;
+    } else {
+      const ins = await db.dbRun(
+        `INSERT INTO users (username, password_hash, role, full_name, npi_number, email)
+         VALUES (?, ?, 'physician', 'OAuth Test Physician', '0000000001', ?)`,
+        ['oauth-test-user', 'dummy-hash', 'oauth-test@example.com']
+      );
+      _oauthTestUserId = ins.lastID;
+    }
+  }
+
+  await test('LabCorp OAuth: generateState returns 64-char hex string', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    const state = oauth.generateState();
+    assertEqual(typeof state, 'string');
+    assertEqual(state.length, 64, 'generateState should return 32 random bytes as 64 hex chars');
+    assert(/^[a-f0-9]+$/.test(state), 'state should be lowercase hex');
+  });
+
+  await test('LabCorp OAuth: generateState produces unique tokens across calls', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    const a = oauth.generateState();
+    const b = oauth.generateState();
+    assert(a !== b, 'two consecutive generateState() calls must not collide');
+  });
+
+  await test('LabCorp OAuth: buildAuthorizeUrl includes all required query params', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    const url = oauth.buildAuthorizeUrl({
+      authUrl: 'https://sandbox.labcorp.com/oauth/authorize',
+      clientId: 'test-client-id',
+      redirectUri: 'http://localhost:3001/api/integrations/labcorp/oauth/callback',
+      scope: 'lab.read lab.write',
+      state: 'abc123'
+    });
+    assert(url.startsWith('https://sandbox.labcorp.com/oauth/authorize?'), 'URL should start with authUrl + ?');
+    assert(url.includes('response_type=code'), 'response_type=code required');
+    assert(url.includes('client_id=test-client-id'), 'client_id required');
+    assert(url.includes('redirect_uri=http%3A%2F%2Flocalhost%3A3001'), 'redirect_uri must be URL-encoded');
+    assert(url.includes('scope=lab.read+lab.write') || url.includes('scope=lab.read%20lab.write'), 'scope required');
+    assert(url.includes('state=abc123'), 'state required');
+  });
+
+  await test('LabCorp OAuth: buildAuthorizeUrl throws on missing required params', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    let threw = false;
+    try {
+      oauth.buildAuthorizeUrl({ clientId: 'x', redirectUri: 'y', state: 'z' }); // no authUrl
+    } catch (e) {
+      threw = true;
+      assert(e.message.includes('authUrl'), 'error should mention missing authUrl');
+    }
+    assert(threw, 'buildAuthorizeUrl should throw on missing authUrl');
+  });
+
+  await test('LabCorp OAuth: parseCallback returns {code,state} on valid input', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    const result = oauth.parseCallback({ code: 'auth-code-xyz', state: 'expected-state' }, 'expected-state');
+    assertEqual(result.code, 'auth-code-xyz');
+    assertEqual(result.state, 'expected-state');
+  });
+
+  await test('LabCorp OAuth: parseCallback throws on state mismatch (CSRF defense)', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    let threw = false;
+    try {
+      oauth.parseCallback({ code: 'x', state: 'attacker-state' }, 'expected-state');
+    } catch (e) {
+      threw = true;
+      assert(e.message.toLowerCase().includes('state'), 'error should mention state mismatch');
+    }
+    assert(threw, 'parseCallback must reject when state does not match expected');
+  });
+
+  await test('LabCorp OAuth: parseCallback surfaces OAuth2 error responses', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    let threw = false;
+    try {
+      oauth.parseCallback(
+        { error: 'access_denied', error_description: 'User cancelled' },
+        'any-state'
+      );
+    } catch (e) {
+      threw = true;
+      assert(e.message.includes('access_denied'), 'error should include OAuth error code');
+    }
+    assert(threw, 'parseCallback must throw when query has error field');
+  });
+
+  await test('LabCorp OAuth: parseCallback throws on missing code', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    let threw = false;
+    try {
+      oauth.parseCallback({ state: 'expected-state' }, 'expected-state');
+    } catch (e) {
+      threw = true;
+      assert(e.message.toLowerCase().includes('code'), 'error should mention missing code');
+    }
+    assert(threw, 'parseCallback must throw when code missing');
+  });
+
+  await test('LabCorp OAuth: storeTokens + getTokens roundtrip with encryption', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    await oauth.storeTokens(db, _oauthTestUserId, {
+      access_token: 'at-secret-123',
+      refresh_token: 'rt-secret-456',
+      token_type: 'Bearer',
+      expires_in: 3600,
+      scope: 'lab.read lab.write'
+    });
+    const loaded = await oauth.getTokens(db, _oauthTestUserId);
+    assertEqual(loaded.access_token, 'at-secret-123', 'access_token should decrypt to original');
+    assertEqual(loaded.refresh_token, 'rt-secret-456', 'refresh_token should decrypt to original');
+    assertEqual(loaded.token_type, 'Bearer');
+    assertEqual(loaded.scope, 'lab.read lab.write');
+    assert(loaded.expires_at, 'expires_at should be populated');
+  });
+
+  await test('LabCorp OAuth: storeTokens row is encrypted (not plaintext) in DB', async () => {
+    const row = await db.dbGet(
+      'SELECT access_token_encrypted, refresh_token_encrypted FROM labcorp_tokens WHERE user_id = ?',
+      [_oauthTestUserId]
+    );
+    assert(row, 'row should exist');
+    assert(!row.access_token_encrypted.includes('at-secret-123'), 'access_token should not be stored as plaintext');
+    assert(!row.refresh_token_encrypted.includes('rt-secret-456'), 'refresh_token should not be stored as plaintext');
+    // Encrypted payload should parse as JSON with ciphertext field
+    const parsed = JSON.parse(row.access_token_encrypted);
+    assert(parsed.ciphertext, 'encrypted payload should have ciphertext field');
+    assert(parsed.iv, 'encrypted payload should have iv field');
+    assert(parsed.authTag, 'encrypted payload should have authTag (AES-GCM)');
+  });
+
+  await test('LabCorp OAuth: storeTokens upserts existing user row (no duplicates)', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    await oauth.storeTokens(db, _oauthTestUserId, {
+      access_token: 'at-updated',
+      refresh_token: 'rt-updated',
+      token_type: 'Bearer',
+      expires_in: 7200,
+      scope: 'lab.read'
+    });
+    const rows = await db.dbAll('SELECT id FROM labcorp_tokens WHERE user_id = ?', [_oauthTestUserId]);
+    assertEqual(rows.length, 1, 'upsert must keep exactly one row per user');
+    const loaded = await oauth.getTokens(db, _oauthTestUserId);
+    assertEqual(loaded.access_token, 'at-updated', 'second storeTokens must overwrite');
+    assertEqual(loaded.scope, 'lab.read');
+  });
+
+  await test('LabCorp OAuth: getTokens returns null for unknown user', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    const loaded = await oauth.getTokens(db, 999999);
+    assertEqual(loaded, null, 'unknown user must yield null, not throw');
+  });
+
+  await test('LabCorp OAuth: deleteTokens removes the row', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    await oauth.deleteTokens(db, _oauthTestUserId);
+    const rows = await db.dbAll('SELECT id FROM labcorp_tokens WHERE user_id = ?', [_oauthTestUserId]);
+    assertEqual(rows.length, 0, 'deleteTokens must remove the row');
+  });
+
+  // ------------------------------------------
+  // OAuth2 network exchange (Chunk 3)
+  // ------------------------------------------
+  // These tests spin up a fake LabCorp token server at 127.0.0.1:random-port
+  // and point the OAuth module at it. We exercise success, error, and
+  // timeout paths against the real HTTP stack so regressions in body
+  // encoding, header handling, or error surfacing get caught here rather
+  // than at Phase 2b smoke-script time.
+  const oauthHttp = require('http');
+  const fakeTokenServer = await new Promise((resolve) => {
+    const srv = oauthHttp.createServer((req, res) => {
+      if (req.url !== '/oauth/token' || req.method !== 'POST') {
+        res.statusCode = 404;
+        res.end('not found');
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        const params = new URLSearchParams(body);
+        const grantType = params.get('grant_type');
+        const code = params.get('code');
+        const refreshToken = params.get('refresh_token');
+        const clientId = params.get('client_id');
+        const clientSecret = params.get('client_secret');
+        const contentType = req.headers['content-type'] || '';
+
+        // Assert the Content-Type is form-urlencoded per RFC 6749 §4.1.3
+        if (!contentType.includes('application/x-www-form-urlencoded')) {
+          res.statusCode = 400;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: 'invalid_request', error_description: 'wrong content-type' }));
+          return;
+        }
+
+        // Authorization code flow
+        if (grantType === 'authorization_code') {
+          if (code === 'valid-code' && clientId === 'test-client' && clientSecret === 'test-secret') {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({
+              access_token: 'at-from-server',
+              refresh_token: 'rt-from-server',
+              token_type: 'Bearer',
+              expires_in: 3600,
+              scope: 'lab.read lab.write'
+            }));
+            return;
+          }
+          if (code === 'bad-code') {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'authorization code is invalid' }));
+            return;
+          }
+          if (code === 'timeout-code') {
+            // Deliberately never respond so the client hits its timeout
+            return;
+          }
+          if (code === 'broken-code') {
+            res.statusCode = 500;
+            res.setHeader('content-type', 'text/plain');
+            res.end('internal server error');
+            return;
+          }
+        }
+
+        // Refresh token flow
+        if (grantType === 'refresh_token') {
+          if (refreshToken === 'valid-refresh') {
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({
+              access_token: 'at-refreshed',
+              refresh_token: 'rt-refreshed',
+              token_type: 'Bearer',
+              expires_in: 7200,
+              scope: 'lab.read lab.write'
+            }));
+            return;
+          }
+          if (refreshToken === 'expired-refresh') {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'refresh token expired' }));
+            return;
+          }
+        }
+
+        // Default: malformed request
+        res.statusCode = 400;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ error: 'invalid_request' }));
+      });
+    });
+    srv.listen(0, '127.0.0.1', () => resolve(srv));
+  });
+  const fakeTokenPort = fakeTokenServer.address().port;
+  const fakeTokenUrl = `http://127.0.0.1:${fakeTokenPort}/oauth/token`;
+
+  await test('LabCorp OAuth: exchangeCodeForTokens returns tokens on success', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    const tokens = await oauth.exchangeCodeForTokens({
+      tokenUrl: fakeTokenUrl,
+      clientId: 'test-client',
+      clientSecret: 'test-secret',
+      code: 'valid-code',
+      redirectUri: 'http://localhost:3001/cb'
+    });
+    assertEqual(tokens.access_token, 'at-from-server');
+    assertEqual(tokens.refresh_token, 'rt-from-server');
+    assertEqual(tokens.token_type, 'Bearer');
+    assertEqual(tokens.expires_in, 3600);
+    assertEqual(tokens.scope, 'lab.read lab.write');
+  });
+
+  await test('LabCorp OAuth: exchangeCodeForTokens throws on OAuth2 error response', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    let threw = false;
+    try {
+      await oauth.exchangeCodeForTokens({
+        tokenUrl: fakeTokenUrl,
+        clientId: 'test-client',
+        clientSecret: 'test-secret',
+        code: 'bad-code',
+        redirectUri: 'http://localhost:3001/cb'
+      });
+    } catch (e) {
+      threw = true;
+      assert(e.message.includes('invalid_grant'), `error should include OAuth2 error code, got: ${e.message}`);
+    }
+    assert(threw, 'exchangeCodeForTokens must throw on 400 response');
+  });
+
+  await test('LabCorp OAuth: exchangeCodeForTokens throws on 5xx', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    let threw = false;
+    try {
+      await oauth.exchangeCodeForTokens({
+        tokenUrl: fakeTokenUrl,
+        clientId: 'test-client',
+        clientSecret: 'test-secret',
+        code: 'broken-code',
+        redirectUri: 'http://localhost:3001/cb'
+      });
+    } catch (e) {
+      threw = true;
+      assert(e.message.toLowerCase().includes('500') || e.message.toLowerCase().includes('server error'),
+        `error should mention HTTP status, got: ${e.message}`);
+    }
+    assert(threw, 'exchangeCodeForTokens must throw on 500 response');
+  });
+
+  await test('LabCorp OAuth: exchangeCodeForTokens times out with override', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    let threw = false;
+    try {
+      await oauth.exchangeCodeForTokens({
+        tokenUrl: fakeTokenUrl,
+        clientId: 'test-client',
+        clientSecret: 'test-secret',
+        code: 'timeout-code',
+        redirectUri: 'http://localhost:3001/cb',
+        timeoutMs: 500 // short override for test
+      });
+    } catch (e) {
+      threw = true;
+      assert(e.message.toLowerCase().includes('timeout') || e.message.toLowerCase().includes('timed out'),
+        `error should mention timeout, got: ${e.message}`);
+    }
+    assert(threw, 'exchangeCodeForTokens must throw on timeout');
+  });
+
+  await test('LabCorp OAuth: refreshAccessToken returns new tokens on success', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    const tokens = await oauth.refreshAccessToken({
+      tokenUrl: fakeTokenUrl,
+      clientId: 'test-client',
+      clientSecret: 'test-secret',
+      refreshToken: 'valid-refresh'
+    });
+    assertEqual(tokens.access_token, 'at-refreshed');
+    assertEqual(tokens.refresh_token, 'rt-refreshed');
+    assertEqual(tokens.expires_in, 7200);
+  });
+
+  await test('LabCorp OAuth: refreshAccessToken throws on expired refresh token', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    let threw = false;
+    try {
+      await oauth.refreshAccessToken({
+        tokenUrl: fakeTokenUrl,
+        clientId: 'test-client',
+        clientSecret: 'test-secret',
+        refreshToken: 'expired-refresh'
+      });
+    } catch (e) {
+      threw = true;
+      assert(e.message.includes('invalid_grant'), `error should surface OAuth2 error, got: ${e.message}`);
+    }
+    assert(threw, 'refreshAccessToken must throw when refresh token rejected');
+  });
+
+  await test('LabCorp OAuth: exchangeCodeForTokens sends form-urlencoded body with required params', async () => {
+    // We've already proven round-trips work; this test exists so a future
+    // refactor can't silently drop redirect_uri or change the content-type
+    // without a test failure. The fake server already rejects non-urlencoded
+    // bodies, so a successful call with valid-code implicitly proves this.
+    const oauth = require('../server/integrations/labcorp/oauth');
+    const tokens = await oauth.exchangeCodeForTokens({
+      tokenUrl: fakeTokenUrl,
+      clientId: 'test-client',
+      clientSecret: 'test-secret',
+      code: 'valid-code',
+      redirectUri: 'http://localhost:3001/cb'
+    });
+    assertEqual(tokens.access_token, 'at-from-server',
+      'round-trip proves Content-Type + form body + client creds are correct');
+  });
+
+  // ------------------------------------------
+  // LabCorp API mode submitOrder / fetchResults (Chunk 4)
+  // ------------------------------------------
+  // Spin up a fake LabCorp API server that handles:
+  //   POST /api/v1/orders                       (submit order)
+  //   GET  /api/v1/orders/:externalOrderId/results (fetch result)
+  // Both require a Bearer token; the server validates it and produces a
+  // 401 for known-stale tokens so we can exercise the auto-refresh path.
+  //
+  // We keep `fakeTokenServer` alive through this block because the auto-
+  // refresh code path posts to /oauth/token there.
+  const labcorpApiServer = await new Promise((resolve) => {
+    const srv = oauthHttp.createServer((req, res) => {
+      const auth = req.headers['authorization'] || '';
+      // Known-stale token triggers 401 exactly once per externalOrderId so
+      // we can prove the retry-after-refresh path.
+      const isStale = auth === 'Bearer stale-access-token';
+      const isFresh = auth === 'Bearer at-refreshed' || auth === 'Bearer at-initial';
+
+      // POST /api/v1/orders
+      if (req.method === 'POST' && req.url === '/api/v1/orders') {
+        let body = '';
+        req.on('data', c => { body += c; });
+        req.on('end', () => {
+          if (!auth.startsWith('Bearer ')) {
+            res.statusCode = 401;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'unauthorized' }));
+            return;
+          }
+          if (isStale) {
+            res.statusCode = 401;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'token_expired' }));
+            return;
+          }
+          if (!isFresh) {
+            res.statusCode = 403;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: 'forbidden' }));
+            return;
+          }
+          // Parse JSON body
+          let parsed;
+          try { parsed = JSON.parse(body); } catch { parsed = {}; }
+          // Return a LabCorp-shaped order response
+          res.statusCode = 201;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({
+            externalOrderId: 'LC-API-12345',
+            status: 'submitted',
+            submittedAt: new Date().toISOString(),
+            patientId: parsed.patientId,
+            tests: parsed.tests
+          }));
+        });
+        return;
+      }
+
+      // GET /api/v1/orders/:id/results
+      const resultMatch = req.url.match(/^\/api\/v1\/orders\/([^/]+)\/results$/);
+      if (req.method === 'GET' && resultMatch) {
+        const externalOrderId = resultMatch[1];
+        if (!auth.startsWith('Bearer ')) {
+          res.statusCode = 401;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: 'unauthorized' }));
+          return;
+        }
+        if (!isFresh) {
+          res.statusCode = 403;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: 'forbidden' }));
+          return;
+        }
+        // Serve an XML fixture matching the parser's expected shape
+        // (see server/integrations/labcorp/mock-responses/a1c.xml)
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LabCorpResult>
+  <orderId>${externalOrderId}</orderId>
+  <orderedAt>2026-04-01T09:00:00Z</orderedAt>
+  <resultedAt>2026-04-02T14:30:00Z</resultedAt>
+  <results>
+    <result>
+      <code>Hemoglobin A1c</code>
+      <displayName>HbA1c</displayName>
+      <value>8.2</value>
+      <unit>%</unit>
+      <refRange>4.0-5.6</refRange>
+      <flag>H</flag>
+    </result>
+  </results>
+</LabCorpResult>`;
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/xml');
+        res.end(xml);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    srv.listen(0, '127.0.0.1', () => resolve(srv));
+  });
+  const labcorpApiPort = labcorpApiServer.address().port;
+  const labcorpApiBase = `http://127.0.0.1:${labcorpApiPort}`;
+
+  // Re-store a fresh token for the test user so API mode tests can load it
+  {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    await oauth.storeTokens(db, _oauthTestUserId, {
+      access_token: 'at-initial',
+      refresh_token: 'valid-refresh',
+      token_type: 'Bearer',
+      expires_in: 3600,
+      scope: 'lab.read lab.write'
+    });
+  }
+
+  await test('LabCorp API: submitOrder posts JSON with Bearer and returns externalOrderId', async () => {
+    const { LabCorpClient } = require('../server/integrations/labcorp/client');
+    const client = new LabCorpClient({
+      mode: 'api',
+      baseUrl: labcorpApiBase,
+      tokenUrl: fakeTokenUrl,
+      clientId: 'test-client',
+      clientSecret: 'test-secret',
+      db,
+      userId: _oauthTestUserId
+    });
+    const result = await client.submitOrder({
+      patientId: 42,
+      tests: ['Hemoglobin A1c']
+    });
+    assertEqual(result.ok, true);
+    assertEqual(result.externalOrderId, 'LC-API-12345');
+    assertEqual(result.status, 'submitted');
+  });
+
+  await test('LabCorp API: submitOrder throws without stored token', async () => {
+    const { LabCorpClient } = require('../server/integrations/labcorp/client');
+    const client = new LabCorpClient({
+      mode: 'api',
+      baseUrl: labcorpApiBase,
+      tokenUrl: fakeTokenUrl,
+      clientId: 'test-client',
+      clientSecret: 'test-secret',
+      db,
+      userId: 888888 // no stored token
+    });
+    let threw = false;
+    try {
+      await client.submitOrder({ patientId: 1, tests: ['CBC'] });
+    } catch (e) {
+      threw = true;
+      assert(
+        e.message.toLowerCase().includes('no tokens') ||
+        e.message.toLowerCase().includes('not authorized') ||
+        e.message.toLowerCase().includes('authenticate'),
+        `error should surface missing credentials, got: ${e.message}`
+      );
+    }
+    assert(threw, 'API submitOrder must throw without stored token');
+  });
+
+  await test('LabCorp API: submitOrder auto-refreshes on 401 and retries', async () => {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    // Store a stale token that the fake server will reject with 401
+    await oauth.storeTokens(db, _oauthTestUserId, {
+      access_token: 'stale-access-token',
+      refresh_token: 'valid-refresh', // the token server will accept this
+      token_type: 'Bearer',
+      expires_in: 3600,
+      scope: 'lab.read lab.write'
+    });
+    const { LabCorpClient } = require('../server/integrations/labcorp/client');
+    const client = new LabCorpClient({
+      mode: 'api',
+      baseUrl: labcorpApiBase,
+      tokenUrl: fakeTokenUrl,
+      clientId: 'test-client',
+      clientSecret: 'test-secret',
+      db,
+      userId: _oauthTestUserId
+    });
+    const result = await client.submitOrder({
+      patientId: 42,
+      tests: ['CBC']
+    });
+    assertEqual(result.ok, true, 'auto-refresh retry must succeed');
+    assertEqual(result.externalOrderId, 'LC-API-12345');
+    // After refresh, the stored access_token should be the new one
+    const fresh = await oauth.getTokens(db, _oauthTestUserId);
+    assertEqual(fresh.access_token, 'at-refreshed', 'stored token must be updated after auto-refresh');
+  });
+
+  await test('LabCorp API: fetchResults GETs XML and returns parsed result', async () => {
+    const { LabCorpClient } = require('../server/integrations/labcorp/client');
+    const client = new LabCorpClient({
+      mode: 'api',
+      baseUrl: labcorpApiBase,
+      tokenUrl: fakeTokenUrl,
+      clientId: 'test-client',
+      clientSecret: 'test-secret',
+      db,
+      userId: _oauthTestUserId
+    });
+    const result = await client.fetchResults('LC-API-12345');
+    assertEqual(result.ok, true, 'parser should report ok=true');
+    assertEqual(result.labOrderId, 'LC-API-12345');
+    assert(Array.isArray(result.results), 'results should be an array');
+    assert(result.results.length >= 1, 'should parse at least one result row');
+    const hba1c = result.results.find(r => /a1c/i.test(r.name || r.code || ''));
+    assert(hba1c, 'should find HbA1c row in parsed output');
+    assertEqual(String(hba1c.value), '8.2');
+    assertEqual(hba1c.abnormalFlag, 'H');
+  });
+
+  await test('LabCorp API: fetchResults throws without stored token', async () => {
+    const { LabCorpClient } = require('../server/integrations/labcorp/client');
+    const client = new LabCorpClient({
+      mode: 'api',
+      baseUrl: labcorpApiBase,
+      tokenUrl: fakeTokenUrl,
+      clientId: 'test-client',
+      clientSecret: 'test-secret',
+      db,
+      userId: 888888
+    });
+    let threw = false;
+    try {
+      await client.fetchResults('LC-API-99999');
+    } catch (e) {
+      threw = true;
+    }
+    assert(threw, 'API fetchResults must throw without stored token');
+  });
+
+  await test('LabCorp API: mock-mode client still works unchanged', async () => {
+    // Regression guard: API mode options must not break mock mode
+    const { LabCorpClient } = require('../server/integrations/labcorp/client');
+    const client = new LabCorpClient({ mode: 'mock' });
+    const result = await client.submitOrder({
+      patientId: 99,
+      tests: ['CBC']
+    });
+    assertEqual(result.ok, true);
+    assert(result.externalOrderId.startsWith('LC-MOCK-'), 'mock mode should still return LC-MOCK- IDs');
+  });
+
+  // ------------------------------------------
+  // HTTP routes (Chunk 5)
+  // ------------------------------------------
+  // These tests mount server/routes/labcorp-routes.js onto a fresh Express
+  // app and exercise it via real HTTP requests — same pattern as the Phase
+  // 14 FHIR HTTP contract tests above. We reuse `fakeTokenServer` and
+  // `labcorpApiServer` from Chunks 3/4 by pointing the env-driven config at
+  // their addresses, then tear everything down together below.
+  //
+  // A tiny user-injection middleware replaces auth.requireAuth so req.user
+  // carries our _oauthTestUserId — the callback handler derives the userId
+  // from the state record, but /oauth/start and /submit both need req.user.
+  const labcorpRoutesExpress = require('express');
+  let labcorpRoutesApp, labcorpRoutesServer, labcorpRoutesPort, labcorpRoutesBase;
+  let _labcorpRoutesLoadOk = true;
+  let _labcorpRoutesLoadErr = null;
+  try {
+    labcorpRoutesApp = labcorpRoutesExpress();
+    labcorpRoutesApp.use(labcorpRoutesExpress.json());
+    // Inject req.user as the seeded physician — matches what auth.requireAuth
+    // would produce after a real JWT verify.
+    labcorpRoutesApp.use((req, _res, next) => {
+      req.user = { sub: _oauthTestUserId, username: 'oauth-test-user', role: 'physician' };
+      next();
+    });
+    const labcorpRoutes = require('../server/routes/labcorp-routes');
+    labcorpRoutes.mountLabCorpRoutes(labcorpRoutesApp, { db });
+    labcorpRoutesServer = await new Promise((resolve) => {
+      const srv = labcorpRoutesApp.listen(0, '127.0.0.1', () => resolve(srv));
+    });
+    labcorpRoutesPort = labcorpRoutesServer.address().port;
+    labcorpRoutesBase = `http://127.0.0.1:${labcorpRoutesPort}`;
+  } catch (err) {
+    _labcorpRoutesLoadOk = false;
+    _labcorpRoutesLoadErr = err;
+  }
+
+  // Helper: send HTTP request to the labcorp-routes test server
+  function labcorpRoutesRequest({ method = 'GET', path, body = null }) {
+    return new Promise((resolve, reject) => {
+      const url = new URL(labcorpRoutesBase + path);
+      const opts = {
+        method,
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname + url.search,
+        headers: { 'Accept': 'application/json' }
+      };
+      let bodyStr = null;
+      if (body) {
+        bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+        opts.headers['Content-Type'] = 'application/json';
+        opts.headers['Content-Length'] = Buffer.byteLength(bodyStr);
+      }
+      const req = oauthHttp.request(opts, (res) => {
+        let raw = '';
+        res.on('data', c => { raw += c; });
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(raw), headers: res.headers }); }
+          catch { resolve({ status: res.statusCode, body: raw, headers: res.headers }); }
+        });
+      });
+      req.on('error', reject);
+      if (bodyStr) req.write(bodyStr);
+      req.end();
+    });
+  }
+
+  // Env-var fixture: point the route handlers at the fake servers from Chunks 3/4.
+  // Save prior values so other phases (or repeated suite runs) are unaffected.
+  const _prevLabcorpEnv = {
+    LABCORP_MODE: process.env.LABCORP_MODE,
+    LABCORP_AUTH_URL: process.env.LABCORP_AUTH_URL,
+    LABCORP_TOKEN_URL: process.env.LABCORP_TOKEN_URL,
+    LABCORP_CLIENT_ID: process.env.LABCORP_CLIENT_ID,
+    LABCORP_CLIENT_SECRET: process.env.LABCORP_CLIENT_SECRET,
+    LABCORP_REDIRECT_URI: process.env.LABCORP_REDIRECT_URI,
+    LABCORP_SANDBOX_URL: process.env.LABCORP_SANDBOX_URL,
+  };
+  process.env.LABCORP_MODE = 'api';
+  process.env.LABCORP_AUTH_URL = 'https://fake.labcorp.test/oauth/authorize';
+  process.env.LABCORP_TOKEN_URL = fakeTokenUrl;
+  process.env.LABCORP_CLIENT_ID = 'test-client';
+  process.env.LABCORP_CLIENT_SECRET = 'test-secret';
+  process.env.LABCORP_REDIRECT_URI = 'http://127.0.0.1/callback';
+  process.env.LABCORP_SANDBOX_URL = labcorpApiBase;
+
+  await test('LabCorp routes: labcorp-routes module loads and mounts cleanly', async () => {
+    if (!_labcorpRoutesLoadOk) {
+      throw new Error(`labcorp-routes failed to load/mount: ${_labcorpRoutesLoadErr && _labcorpRoutesLoadErr.message}`);
+    }
+    assert(labcorpRoutesServer, 'test server should be listening');
+  });
+
+  await test('LabCorp routes: GET /api/integrations/labcorp/status returns mode + hasCredentials', async () => {
+    const { status, body } = await labcorpRoutesRequest({ path: '/api/integrations/labcorp/status' });
+    assertEqual(status, 200);
+    assertEqual(body.mode, 'api');
+    assertEqual(body.hasCredentials, true);
+  });
+
+  // Fresh access_token for the submit test (previous test may have left a stale one)
+  {
+    const oauth = require('../server/integrations/labcorp/oauth');
+    await oauth.storeTokens(db, _oauthTestUserId, {
+      access_token: 'at-initial',
+      refresh_token: 'valid-refresh',
+      token_type: 'Bearer',
+      expires_in: 3600,
+      scope: 'lab.read lab.write'
+    });
+  }
+
+  // Capture a state returned by /oauth/start so we can use it in callback tests
+  let _startedOauthState = null;
+
+  await test('LabCorp routes: POST /oauth/start returns authorizeUrl + state', async () => {
+    const { status, body } = await labcorpRoutesRequest({
+      method: 'POST',
+      path: '/api/integrations/labcorp/oauth/start',
+      body: {}
+    });
+    assertEqual(status, 200);
+    assert(body.authorizeUrl, 'response should include authorizeUrl');
+    assert(body.state, 'response should include state');
+    assertEqual(typeof body.state, 'string');
+    assertEqual(body.state.length, 64, 'state should be 64-char hex');
+    assert(body.authorizeUrl.includes(encodeURIComponent(body.state)) || body.authorizeUrl.includes(body.state),
+      'authorizeUrl must embed the issued state');
+    assert(body.authorizeUrl.includes('client_id=test-client'), 'authorizeUrl must include clientId');
+    assert(body.authorizeUrl.includes('response_type=code'), 'authorizeUrl must request code grant');
+    _startedOauthState = body.state;
+  });
+
+  await test('LabCorp routes: GET /oauth/callback with valid state exchanges code and stores tokens', async () => {
+    assert(_startedOauthState, 'precondition: /oauth/start must have produced a state');
+    const { status, body } = await labcorpRoutesRequest({
+      path: `/api/integrations/labcorp/oauth/callback?code=valid-code&state=${_startedOauthState}`
+    });
+    assertEqual(status, 200, `callback should succeed with valid state, got ${status}: ${JSON.stringify(body)}`);
+    assertEqual(body.ok, true);
+    assertEqual(body.userId, _oauthTestUserId);
+    // And the tokens returned by the fake token server should now be stored
+    const oauth = require('../server/integrations/labcorp/oauth');
+    const stored = await oauth.getTokens(db, _oauthTestUserId);
+    assertEqual(stored.access_token, 'at-from-server',
+      'callback must persist the tokens it exchanged from the token server');
+  });
+
+  await test('LabCorp routes: GET /oauth/callback with unknown state returns 400', async () => {
+    const { status, body } = await labcorpRoutesRequest({
+      path: '/api/integrations/labcorp/oauth/callback?code=valid-code&state=deadbeef-not-issued'
+    });
+    assertEqual(status, 400);
+    assert(body.error, 'error body should carry an error field');
+  });
+
+  await test('LabCorp routes: GET /oauth/callback with OAuth2 error param returns 400', async () => {
+    // Issue a fresh state so we pass the state lookup and reach parseCallback
+    const { body: started } = await labcorpRoutesRequest({
+      method: 'POST',
+      path: '/api/integrations/labcorp/oauth/start',
+      body: {}
+    });
+    const { status, body } = await labcorpRoutesRequest({
+      path: `/api/integrations/labcorp/oauth/callback?error=access_denied&state=${started.state}`
+    });
+    assertEqual(status, 400);
+    assert(
+      /access_denied|callback/i.test(String(body.error || body.detail || '')),
+      `error should surface OAuth2 error, got: ${JSON.stringify(body)}`
+    );
+  });
+
+  await test('LabCorp routes: GET /oauth/callback with state but bad-code surfaces token exchange failure', async () => {
+    const { body: started } = await labcorpRoutesRequest({
+      method: 'POST',
+      path: '/api/integrations/labcorp/oauth/start',
+      body: {}
+    });
+    const { status, body } = await labcorpRoutesRequest({
+      path: `/api/integrations/labcorp/oauth/callback?code=bad-code&state=${started.state}`
+    });
+    assertEqual(status, 502, `bad-code should surface upstream failure, got ${status}`);
+    assert(
+      /invalid_grant|token_exchange_failed/i.test(String(body.error || body.detail || '')),
+      `detail should mention upstream error, got: ${JSON.stringify(body)}`
+    );
+  });
+
+  // Seed a lab order row so POST /api/orders/:id/submit-to-labcorp has something to submit
+  let _labOrderIdForSubmit;
+  {
+    // Refresh stored tokens back to something the fake API server accepts
+    const oauth = require('../server/integrations/labcorp/oauth');
+    await oauth.storeTokens(db, _oauthTestUserId, {
+      access_token: 'at-initial',
+      refresh_token: 'valid-refresh',
+      token_type: 'Bearer',
+      expires_in: 3600,
+      scope: 'lab.read lab.write'
+    });
+    const insertResult = await db.dbRun(
+      `INSERT INTO lab_orders (patient_id, test_name, order_date, ordered_by)
+       VALUES (?, ?, date('now'), ?)`,
+      [sarahId, 'Hemoglobin A1c', 'Dr. OAuth Test']
+    );
+    _labOrderIdForSubmit = insertResult.lastID;
+  }
+
+  await test('LabCorp routes: POST /api/orders/:id/submit-to-labcorp submits and writes external_order_id', async () => {
+    const { status, body } = await labcorpRoutesRequest({
+      method: 'POST',
+      path: `/api/orders/${_labOrderIdForSubmit}/submit-to-labcorp`,
+      body: {}
+    });
+    assertEqual(status, 200, `submit should succeed, got ${status}: ${JSON.stringify(body)}`);
+    assertEqual(body.ok, true);
+    assertEqual(body.externalOrderId, 'LC-API-12345');
+    // The lab_orders row should now carry the externalOrderId
+    const row = await db.dbGet(
+      'SELECT external_order_id, labcorp_status FROM lab_orders WHERE id = ?',
+      [_labOrderIdForSubmit]
+    );
+    assertEqual(row.external_order_id, 'LC-API-12345',
+      'external_order_id column must be updated after successful submit');
+    assertEqual(row.labcorp_status, 'submitted');
+  });
+
+  await test('LabCorp routes: POST /api/orders/:id/submit-to-labcorp returns 404 for unknown order', async () => {
+    const { status, body } = await labcorpRoutesRequest({
+      method: 'POST',
+      path: '/api/orders/9999999/submit-to-labcorp',
+      body: {}
+    });
+    assertEqual(status, 404);
+    assert(body.error, 'error field required');
+  });
+
+  // Tear down the routes test server before closing the fake upstream servers
+  if (labcorpRoutesServer) {
+    await new Promise((resolve) => labcorpRoutesServer.close(resolve));
+  }
+
+  // Restore env vars so other tests/phases are unaffected
+  for (const [k, v] of Object.entries(_prevLabcorpEnv)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+
+  // Tear down servers so the test process can exit cleanly
+  await new Promise((resolve) => labcorpApiServer.close(resolve));
+  await new Promise((resolve) => fakeTokenServer.close(resolve));
+
+  // ------------------------------------------
+  // LabSynthesisAgent (Chunk 6)
+  // ------------------------------------------
+  // LabSynthesisAgent bridges raw LabCorp results → patient context updates
+  // → downstream CDS/Domain Logic consumption. It runs in Tier 2 because
+  // it only transforms data (no dosing or ordering decisions).
+  //
+  // We use a tiny fake MessageBus instead of the real one so these tests
+  // don't depend on the `agent_messages` DB table (not created in the base
+  // test schema) or the DB-persistence path. The unit under test is the
+  // agent's orchestration logic, not the bus internals.
+  function makeFakeBus() {
+    const sent = [];
+    const subs = [];
+    return {
+      sent,
+      subs,
+      async sendMessage(from, to, type, payload, opts = {}) {
+        sent.push({ from, to, type, payload, opts });
+        // Fan-out to any subscribers so an agent's emission can trigger
+        // downstream subscribers in the same test context.
+        for (const s of subs) {
+          if (s.type === type) {
+            try {
+              await s.handler({
+                message_type: type,
+                from_agent: from,
+                to_agent: to,
+                payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
+                patient_id: opts.patientId || null,
+                encounter_id: opts.encounterId || null,
+              });
+            } catch (err) {
+              // Mirror real MessageBus: subscriber errors don't bubble up to sender.
+              // eslint-disable-next-line no-console
+              console.warn('[fake bus] subscriber failed:', err.message);
+            }
+          }
+        }
+        return { id: `fake-${sent.length}`, message_type: type };
+      },
+      subscribe(module, messageTypes, handler) {
+        const types = Array.isArray(messageTypes) ? messageTypes : [messageTypes];
+        for (const t of types) {
+          subs.push({ module, type: t, handler });
+        }
+        return `sub-${subs.length}`;
+      },
+    };
+  }
+
+  // Small XML fixture that matches the parser contract. Mirrors a1c.xml but
+  // is inline so the test doesn't depend on file I/O ordering.
+  const labSynthXmlFixture = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<LabCorpResult>
+  <orderId>LC-CHUNK6-001</orderId>
+  <orderedAt>2026-04-05T09:00:00Z</orderedAt>
+  <resultedAt>2026-04-05T14:00:00Z</resultedAt>
+  <results>
+    <result>
+      <code>Hemoglobin A1c</code>
+      <displayName>HbA1c</displayName>
+      <value>8.2</value>
+      <unit>%</unit>
+      <refRange>4.0-5.6</refRange>
+      <flag>H</flag>
+    </result>
+  </results>
+</LabCorpResult>`);
+
+  await test('LabCorp Chunk 6: MESSAGE_TYPES includes LAB_SYNTHESIS_READY', async () => {
+    // Fresh require so we see the latest export
+    delete require.cache[require.resolve('../server/agents/message-bus')];
+    const messageBusMod = require('../server/agents/message-bus');
+    const types = messageBusMod.MESSAGE_TYPES || {};
+    assert(types.LAB_SYNTHESIS_READY, 'LAB_SYNTHESIS_READY must be registered in MESSAGE_TYPES');
+    assertEqual(types.LAB_SYNTHESIS_READY, 'LAB_SYNTHESIS_READY');
+  });
+
+  await test('LabCorp Chunk 6: LabSynthesisAgent loads and is Tier 2', async () => {
+    const { LabSynthesisAgent } = require('../server/agents/lab-synthesis-agent');
+    const agent = new LabSynthesisAgent();
+    assertEqual(agent.name, 'lab_synthesis');
+    assertEqual(agent.autonomyTier, 2, 'LabSynthesisAgent should run at Tier 2 (Supervised)');
+  });
+
+  await test('LabCorp Chunk 6: synthesizeRaw parses XML buffer and returns normalized results', async () => {
+    const { LabSynthesisAgent } = require('../server/agents/lab-synthesis-agent');
+    const agent = new LabSynthesisAgent();
+    const result = await agent.synthesizeRaw({
+      contentType: 'application/xml',
+      buffer: labSynthXmlFixture,
+    });
+    assertEqual(result.ok, true, `synthesizeRaw should succeed: ${JSON.stringify(result.warnings || [])}`);
+    assert(Array.isArray(result.results), 'results must be an array');
+    assert(result.results.length >= 1, 'should parse at least one lab value');
+    const a1c = result.results.find(r => /a1c/i.test(r.code || r.displayName || ''));
+    assert(a1c, 'should find HbA1c row');
+    assertEqual(String(a1c.value), '8.2');
+    assertEqual(a1c.abnormalFlag, 'H');
+  });
+
+  await test('LabCorp Chunk 6: synthesizeRaw returns ok=false with warnings on garbage buffer', async () => {
+    const { LabSynthesisAgent } = require('../server/agents/lab-synthesis-agent');
+    const agent = new LabSynthesisAgent();
+    const result = await agent.synthesizeRaw({
+      contentType: 'application/xml',
+      buffer: Buffer.from('not really xml at all'),
+    });
+    // Must never throw; parser/agent should capture failure state
+    assertEqual(result.ok, false);
+    assert(Array.isArray(result.warnings), 'warnings should be an array');
+  });
+
+  await test('LabCorp Chunk 6: process() emits LAB_SYNTHESIS_READY via message bus', async () => {
+    const { LabSynthesisAgent } = require('../server/agents/lab-synthesis-agent');
+    const fakeBus = makeFakeBus();
+    const agent = new LabSynthesisAgent({ messageBus: fakeBus });
+    const outcome = await agent.process(
+      {
+        patient: { id: 42 },
+        encounter: { id: 999 },
+      },
+      {
+        // Agent-results shape: provides the raw lab artifact this run should synthesize
+        rawLabArtifact: {
+          contentType: 'application/xml',
+          buffer: labSynthXmlFixture,
+          externalOrderId: 'LC-CHUNK6-001',
+        },
+      }
+    );
+    assertEqual(outcome.ok, true);
+    assert(fakeBus.sent.some(m => m.type === 'LAB_SYNTHESIS_READY'),
+      'LAB_SYNTHESIS_READY should be emitted after successful synthesis');
+    const emitted = fakeBus.sent.find(m => m.type === 'LAB_SYNTHESIS_READY');
+    assertEqual(emitted.opts.patientId, 42);
+    assertEqual(emitted.opts.encounterId, 999);
+    assert(emitted.payload && Array.isArray(emitted.payload.results),
+      'payload should carry parsed results array');
+  });
+
+  await test('LabCorp Chunk 6: attachMessageBus subscribes to LAB_RESULTED', async () => {
+    const { LabSynthesisAgent } = require('../server/agents/lab-synthesis-agent');
+    const fakeBus = makeFakeBus();
+    const agent = new LabSynthesisAgent();
+    agent.attachMessageBus(fakeBus);
+    // After attaching, the agent should have registered at least one subscription for LAB_RESULTED
+    const labSubs = fakeBus.subs.filter(s => s.type === 'LAB_RESULTED');
+    assert(labSubs.length >= 1, 'attachMessageBus must subscribe to LAB_RESULTED');
+  });
+
+  await test('LabCorp Chunk 6: LAB_RESULTED subscription emits LAB_SYNTHESIS_READY downstream', async () => {
+    const { LabSynthesisAgent } = require('../server/agents/lab-synthesis-agent');
+    const fakeBus = makeFakeBus();
+    const agent = new LabSynthesisAgent();
+    agent.attachMessageBus(fakeBus);
+    // Simulate an upstream LAB_RESULTED event containing the raw artifact
+    await fakeBus.sendMessage('labcorp_integration', 'broadcast', 'LAB_RESULTED', {
+      externalOrderId: 'LC-CHUNK6-001',
+      contentType: 'application/xml',
+      // Buffers aren't JSON-serializable; use base64 so the wire format is safe
+      bufferBase64: labSynthXmlFixture.toString('base64'),
+    }, { patientId: 42, encounterId: 999 });
+    const synthesized = fakeBus.sent.filter(m => m.type === 'LAB_SYNTHESIS_READY');
+    assert(synthesized.length >= 1,
+      `LAB_RESULTED should trigger LAB_SYNTHESIS_READY, got: ${JSON.stringify(fakeBus.sent.map(s => s.type))}`);
+    assertEqual(synthesized[0].opts.patientId, 42);
+  });
+
+  // Restore PHI_ENCRYPTION_KEY to prior value so subsequent phases are unaffected
+  if (_prevPhiKey === undefined) {
+    delete process.env.PHI_ENCRYPTION_KEY;
+  } else {
+    process.env.PHI_ENCRYPTION_KEY = _prevPhiKey;
+  }
 
   // ==========================================
   // RESULTS

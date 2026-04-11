@@ -45,6 +45,7 @@ const MESSAGE_TYPES = {
   SPECIALTY_PACKET_READY: 'SPECIALTY_PACKET_READY', // MediVault Packaging → Translation
   PRESCRIPTION_CREATED: 'PRESCRIPTION_CREATED', // Orders → Event Bus (external webhook)
   LAB_RESULTED: 'LAB_RESULTED',           // Lab → PatientLink + MediVault
+  LAB_SYNTHESIS_READY: 'LAB_SYNTHESIS_READY', // LabSynthesis → CDS + Domain Logic (Phase 2b)
 
   // Functional-Medicine / HRT / Peptide Dosing Events (Tier 3 MD-in-loop)
   DOSING_REVIEW_REQUEST: 'DOSING_REVIEW_REQUEST',             // Domain Logic → Physician (approval required)

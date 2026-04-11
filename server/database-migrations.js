@@ -43,6 +43,8 @@ async function runMigrations(db) {
     await createChargesTable(db);
     await createFhirIngestTables(db);
     await addRxNormColumns(db);
+    await createLabCorpTokensTable(db);
+    await addLabCorpColumns(db);
 
     console.log('[MIGRATIONS] All migrations completed successfully');
     return { success: true, message: 'All migrations completed' };
@@ -818,6 +820,88 @@ async function addRxNormColumns(db) {
 }
 
 // ==========================================
+// LABCORP TOKENS TABLE (Phase 2b)
+// ==========================================
+
+/**
+ * Create labcorp_tokens table for OAuth2 access + refresh token storage.
+ *
+ * Tokens are stored ENCRYPTED via server/security/phi-encryption.js. Never
+ * store plaintext. The caller is responsible for encryption; this table
+ * only holds ciphertext.
+ *
+ * Each row represents the OAuth2 grant for one (user, LabCorp account)
+ * pairing. Refreshes update the row in place; expires_at drives the
+ * rotation decision.
+ *
+ * Idempotent via CREATE TABLE IF NOT EXISTS.
+ */
+async function createLabCorpTokensTable(db) {
+  await dbRun(db, `
+    CREATE TABLE IF NOT EXISTS labcorp_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE,
+      access_token_encrypted TEXT NOT NULL,
+      refresh_token_encrypted TEXT NOT NULL,
+      token_type TEXT NOT NULL DEFAULT 'Bearer',
+      expires_at DATETIME NOT NULL,
+      scope TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_refresh_at DATETIME,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  // UNIQUE(user_id) enforces one OAuth grant per user. Upserts via INSERT
+  // ... ON CONFLICT(user_id) DO UPDATE rely on this constraint to replace
+  // the row in place instead of accumulating historical grants.
+  await dbRun(db, `CREATE INDEX IF NOT EXISTS idx_labcorp_tokens_user ON labcorp_tokens(user_id)`);
+  await dbRun(db, `CREATE INDEX IF NOT EXISTS idx_labcorp_tokens_expires ON labcorp_tokens(expires_at)`);
+  console.log('[MIGRATIONS] labcorp_tokens table ready');
+}
+
+/**
+ * Add LabCorp-specific columns to lab_orders so Phase 2b can track external
+ * order lifecycle and raw PDF storage paths.
+ *
+ * - external_order_id: LabCorp-issued order identifier (returned from submit)
+ * - labcorp_status:    LabCorp-side lifecycle ('submitted','in_transit',
+ *                      'partial_result','complete','error','cancelled')
+ * - labcorp_raw_pdf_path: filesystem path to raw result PDF for audit
+ *
+ * Uses the same PRAGMA-then-ALTER pattern as addRxNormColumns. Idempotent.
+ */
+async function addLabCorpColumns(db) {
+  const columns = [
+    { name: 'external_order_id', type: 'TEXT' },
+    { name: 'labcorp_status', type: 'TEXT' },
+    { name: 'labcorp_raw_pdf_path', type: 'TEXT' },
+  ];
+  try {
+    const cols = await new Promise((resolve, reject) => {
+      db.all('PRAGMA table_info(lab_orders)', (err, rows) => {
+        if (err) reject(err); else resolve(rows);
+      });
+    });
+    for (const col of columns) {
+      if (!cols.some(c => c.name === col.name)) {
+        await new Promise((resolve, reject) => {
+          db.run(`ALTER TABLE lab_orders ADD COLUMN ${col.name} ${col.type}`, (err) => {
+            if (err) reject(err);
+            else {
+              console.log(`[MIGRATIONS] Added ${col.name} column to lab_orders`);
+              resolve();
+            }
+          });
+        });
+      }
+    }
+  } catch (err) {
+    console.warn(`[MIGRATIONS] lab_orders column migration: ${err.message}`);
+  }
+}
+
+// ==========================================
 
 module.exports = {
   runMigrations,
@@ -833,5 +917,7 @@ module.exports = {
   createAppointmentsTable,
   createChargesTable,
   createFhirIngestTables,
-  addRxNormColumns
+  addRxNormColumns,
+  createLabCorpTokensTable,
+  addLabCorpColumns
 };
