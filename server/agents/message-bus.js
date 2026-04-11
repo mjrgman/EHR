@@ -44,7 +44,13 @@ const MESSAGE_TYPES = {
   RED_FLAG_ALERT: 'RED_FLAG_ALERT',       // MediVault Red Flag → Physician
   SPECIALTY_PACKET_READY: 'SPECIALTY_PACKET_READY', // MediVault Packaging → Translation
   PRESCRIPTION_CREATED: 'PRESCRIPTION_CREATED', // Orders → Event Bus (external webhook)
-  LAB_RESULTED: 'LAB_RESULTED'            // Lab → PatientLink + MediVault
+  LAB_RESULTED: 'LAB_RESULTED',           // Lab → PatientLink + MediVault
+
+  // Functional-Medicine / HRT / Peptide Dosing Events (Tier 3 MD-in-loop)
+  DOSING_REVIEW_REQUEST: 'DOSING_REVIEW_REQUEST',             // Domain Logic → Physician (approval required)
+  DOSING_APPROVED: 'DOSING_APPROVED',                         // Physician → Orders (execute approved dosing)
+  DOSING_REJECTED: 'DOSING_REJECTED',                         // Physician → MediVault Red Flag (log rejection)
+  FUNCTIONAL_PATTERN_DETECTED: 'FUNCTIONAL_PATTERN_DETECTED'  // Domain Logic → CDS + Red Flag
 };
 
 // Message statuses
@@ -501,6 +507,27 @@ class MessageBus extends EventEmitter {
     });
     this.subscribe('medivault_ingestion', 'LAB_RESULTED', async (msg) => {
       this.emit('catc:lab_to_vault', msg);
+    });
+
+    // Dosing review requests → MediVault vault timeline (audit trail of every dosing escalation)
+    this.subscribe('medivault_ingestion', 'DOSING_REVIEW_REQUEST', async (msg) => {
+      this.emit('catc:dosing_review_to_vault', msg);
+    });
+
+    // Dosing decisions (approved/rejected) → MediVault vault timeline (audit trail of physician action)
+    this.subscribe('medivault_ingestion', 'DOSING_APPROVED', async (msg) => {
+      this.emit('catc:dosing_approved_to_vault', msg);
+    });
+    this.subscribe('medivault_ingestion', 'DOSING_REJECTED', async (msg) => {
+      this.emit('catc:dosing_rejected_to_vault', msg);
+    });
+
+    // Functional-medicine pattern detections → CDS (correlate with standard CDS rules) + Red Flag (high-risk patterns)
+    this.subscribe('cds', 'FUNCTIONAL_PATTERN_DETECTED', async (msg) => {
+      this.emit('catc:functional_pattern_to_cds', msg);
+    });
+    this.subscribe('medivault_redflag', 'FUNCTIONAL_PATTERN_DETECTED', async (msg) => {
+      this.emit('catc:functional_pattern_to_redflag', msg);
     });
 
     console.log('[MessageBus] CATC cross-module data flows wired');

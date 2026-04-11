@@ -38,6 +38,7 @@ const { MAAgent } = require('./ma-agent');
 const { PhysicianAgent } = require('./physician-agent');
 const { ScribeAgent } = require('./scribe-agent');
 const { CDSAgent } = require('./cds-agent');
+const { DomainLogicAgent } = require('./domain-logic-agent');
 const { OrdersAgent } = require('./orders-agent');
 const { CodingAgent } = require('./coding-agent');
 const { QualityAgent } = require('./quality-agent');
@@ -74,6 +75,7 @@ function getOrchestrator(db) {
     orchestrator
       .register(new ScribeAgent())       // Phase 1 — no deps
       .register(new CDSAgent())          // Phase 1 — no deps
+      .register(new DomainLogicAgent())  // Phase 1b — Tier 3 specialty layer, depends on cds (guardrail)
       .register(new OrdersAgent())       // Phase 2 — depends on scribe + cds
       .register(new CodingAgent())       // Phase 2 — depends on scribe + cds
       .register(new QualityAgent());     // Phase 3 — depends on all above
@@ -167,7 +169,7 @@ async function runEncounterPipeline(patientId, encounterId, db, options = {}) {
   const orch = getOrchestrator(db);
   const context = await buildContext(patientId, encounterId, db);
   // Only run encounter agents by default
-  const encounterAgents = ['scribe', 'cds', 'orders', 'coding', 'quality'];
+  const encounterAgents = ['scribe', 'cds', 'domain_logic', 'orders', 'coding', 'quality'];
   return orch.runPipeline(context, { only: encounterAgents, ...options });
 }
 
@@ -205,6 +207,7 @@ module.exports = {
   PhysicianAgent,
   ScribeAgent,
   CDSAgent,
+  DomainLogicAgent,
   OrdersAgent,
   CodingAgent,
   QualityAgent,

@@ -24,6 +24,7 @@ The code-level source of truth lives in `server/agents/module-registry.js`.
 | Orders | Clinical execution | Ordering workflow | 3 | Consolidate labs, imaging, referrals, and prescriptions into structured order packets | Physician approval and downstream services |
 | Coding | Revenue and documentation | Coding / billing review | 2 | Generate E&M support, ICD-10 mapping, and coding completeness feedback | Physician, billing staff |
 | Quality | Oversight and population health | Quality / compliance operations | 2 | Track care gaps, measures, and readiness for quality programs | Physician, MA, quality operations |
+| Domain Logic | Encounter support (specialty domain) | Functional-medicine / HRT / peptide specialist | 3 | Evaluate hormone, peptide, and functional-medicine patterns against evidence-based rules; propose dosing changes | Physician (via `DOSING_REVIEW_REQUEST`), CDS, Orders, MediVault Red Flag |
 
 ## Patient control and safety boundaries
 
@@ -36,13 +37,27 @@ The code-level source of truth lives in `server/agents/module-registry.js`.
 - Orders: prepares structured orders but does not transmit without physician authorization.
 - Coding: supports accurate coding but cannot distort clinical truth for reimbursement.
 - Quality: flags gaps and compliance risks; does not auto-order care.
+- Domain Logic: recommendation-only and draft-only; every dosing change routes through `requestDosingApproval()` → physician `DOSING_REVIEW_REQUEST` and cannot auto-execute. Evidence source is a mandatory field on every rule.
 
 ## Dependency shape
 
 - Access layer: `phone_triage`, `front_desk`, `ma`, `physician`
-- Encounter layer phase 1: `scribe`, `cds`
+- Encounter layer phase 1: `scribe`, `cds`, `domain_logic`
 - Encounter layer phase 2: `orders`, `coding`
 - Oversight layer phase 3: `quality`
+
+## Domain Logic module — scope note
+
+The Domain Logic module mirrors the CDS engine's shape (rule loader + evaluator + suggestion
+emitter) but targets specialty-medicine knowledge that falls outside mainstream primary-care
+guidelines: functional-medicine patterns, bioidentical hormone replacement, peptide therapy
+titration, and similar clinician-authored protocols. Rules live in
+`server/domain/rules/*.js` and are loaded by `server/domain/knowledge-base.js`. The agent
+consumes encounter context plus lab results, emits `FUNCTIONAL_PATTERN_DETECTED` for
+informational findings, and uses `requestDosingApproval()` for any therapy change. Because
+this domain has narrower evidence bases and tighter safety windows than guideline-driven
+primary care, the module runs at Tier 3 — nothing executes without an explicit physician
+approval captured in the audit trail.
 
 ## Why this matters
 

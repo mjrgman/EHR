@@ -1,0 +1,283 @@
+{
+  "version": "1.0.0",
+  "description": "Domain Logic (Functional Medicine / HRT / Peptide) scenarios — every scenario validates that standard-of-care CDS remains the guardrail, Tier 3 gating holds, and no specialty rule can override mainstream safety alerts.",
+  "scenarios": [
+    {
+      "id": "HRT-INIT-M-001",
+      "name": "Low Testosterone — Symptomatic Male, Clean Workup",
+      "category": "hrt_male",
+      "severity": "moderate",
+      "domain_logic_expected": true,
+      "patient": {
+        "first_name": "David",
+        "middle_name": "Alan",
+        "last_name": "Harrison",
+        "dob": "1976-04-18",
+        "sex": "M",
+        "phone": "478-555-0712",
+        "email": "david.harrison@example.com",
+        "address_line1": "1215 Oak Ridge Lane",
+        "city": "Macon",
+        "state": "GA",
+        "zip": "31211"
+      },
+      "problems": [],
+      "medications": [],
+      "allergies": [],
+      "encounter": {
+        "encounter_type": "Office Visit - Men's Health",
+        "chief_complaint": "Fatigue, low libido, decreased motivation for 8 months",
+        "provider": "Dr. Renner"
+      },
+      "vitals": {
+        "systolic_bp": 124,
+        "diastolic_bp": 78,
+        "heart_rate": 72,
+        "temperature": 98.2,
+        "weight": 185,
+        "height": 70,
+        "spo2": 99
+      },
+      "labs": [
+        { "test_name": "Total Testosterone", "result_value": "212", "units": "ng/dL", "reference_range": "300-1000", "abnormal_flag": "L", "status": "final" },
+        { "test_name": "Free Testosterone", "result_value": "4.1", "units": "pg/mL", "reference_range": "8.7-25.1", "abnormal_flag": "L", "status": "final" },
+        { "test_name": "LH", "result_value": "3.2", "units": "mIU/mL", "reference_range": "1.7-8.6", "abnormal_flag": "", "status": "final" },
+        { "test_name": "FSH", "result_value": "4.1", "units": "mIU/mL", "reference_range": "1.5-12.4", "abnormal_flag": "", "status": "final" },
+        { "test_name": "PSA", "result_value": "0.9", "units": "ng/mL", "reference_range": "<4.0", "abnormal_flag": "", "status": "final" },
+        { "test_name": "Hematocrit", "result_value": "44", "units": "%", "reference_range": "40-54", "abnormal_flag": "", "status": "final" }
+      ],
+      "transcript": "Doctor: David, your total testosterone came back at 212, free testosterone 4.1. LH and FSH are normal, PSA is 0.9, hematocrit 44. Given your symptoms of fatigue, low libido, and decreased motivation for eight months, you meet criteria for testosterone replacement therapy. I'd like to start testosterone cypionate 100 mg IM weekly.",
+      "expected_domain_logic": {
+        "should_fire": ["hrt-tt-low-male", "hrt-tt-init-male"],
+        "should_not_fire": ["hrt-tt-hct-high", "hrt-tt-psa-rise"],
+        "dosing_proposals_count": 1,
+        "requires_physician_approval": true,
+        "tier3_gate_enforced": true
+      }
+    },
+    {
+      "id": "HRT-SAFETY-HCT-001",
+      "name": "Testosterone Titration Blocked by Hematocrit Safety Rule",
+      "category": "hrt_male",
+      "severity": "urgent",
+      "domain_logic_expected": true,
+      "patient": {
+        "first_name": "Robert",
+        "last_name": "Kirkland",
+        "dob": "1968-07-03",
+        "sex": "M",
+        "phone": "478-555-0913",
+        "email": "robert.kirkland@example.com"
+      },
+      "problems": [
+        { "problem_name": "Hypogonadism", "icd10_code": "E29.1", "status": "active", "onset_date": "2023-09-01" }
+      ],
+      "medications": [
+        { "medication_name": "Testosterone Cypionate", "dose": "100mg", "route": "IM", "frequency": "weekly", "status": "active", "prescriber": "Dr. Renner" }
+      ],
+      "allergies": [],
+      "encounter": {
+        "encounter_type": "Office Visit - HRT Follow-up",
+        "chief_complaint": "3-month TRT follow-up",
+        "provider": "Dr. Renner"
+      },
+      "vitals": {
+        "systolic_bp": 130,
+        "diastolic_bp": 82,
+        "heart_rate": 74,
+        "weight": 192,
+        "height": 70
+      },
+      "labs": [
+        { "test_name": "Total Testosterone", "result_value": "360", "units": "ng/dL", "reference_range": "300-1000", "abnormal_flag": "", "status": "final" },
+        { "test_name": "Hematocrit", "result_value": "55.2", "units": "%", "reference_range": "40-54", "abnormal_flag": "H", "status": "final" },
+        { "test_name": "PSA", "result_value": "1.1", "units": "ng/mL", "reference_range": "<4.0", "abnormal_flag": "", "status": "final" }
+      ],
+      "transcript": "Patient is 3 months into TRT. Trough testosterone 360. However, hematocrit is now 55.2 — above the safety threshold of 54%. We need to hold testosterone immediately regardless of how much the patient wants a dose increase.",
+      "expected_domain_logic": {
+        "should_fire": ["hrt-tt-hct-high"],
+        "should_not_fire": ["hrt-tt-titrate-low-male"],
+        "safety_block_expected": true,
+        "blocked_rule_types": ["hrt_titration", "hrt_initiation"]
+      }
+    },
+    {
+      "id": "HRT-GUARDRAIL-CDS-001",
+      "name": "Standard-of-Care CDS Alert Blocks HRT Proposal",
+      "category": "hrt_male",
+      "severity": "urgent",
+      "domain_logic_expected": true,
+      "_guardrail_validation": "This scenario validates the core safety contract: when CDS fires an urgent alert involving testosterone or a contraindication, the Domain Logic Agent MUST discard any conflicting proposal and log it as a Level-1 safety event. No physician approval request should ever fire.",
+      "patient": {
+        "first_name": "Kenneth",
+        "last_name": "Ford",
+        "dob": "1955-02-14",
+        "sex": "M",
+        "phone": "478-555-0818"
+      },
+      "problems": [
+        { "problem_name": "Prostate Cancer (active surveillance)", "icd10_code": "C61", "status": "active", "onset_date": "2023-11-01" },
+        { "problem_name": "Hypogonadism", "icd10_code": "E29.1", "status": "active", "onset_date": "2024-01-01" }
+      ],
+      "medications": [],
+      "allergies": [],
+      "encounter": {
+        "encounter_type": "Office Visit - Men's Health",
+        "chief_complaint": "Fatigue, low libido — patient requests TRT",
+        "provider": "Dr. Renner"
+      },
+      "vitals": { "systolic_bp": 128, "diastolic_bp": 80 },
+      "labs": [
+        { "test_name": "Total Testosterone", "result_value": "245", "units": "ng/dL", "abnormal_flag": "L", "status": "final" },
+        { "test_name": "PSA", "result_value": "5.2", "units": "ng/mL", "abnormal_flag": "H", "status": "final" }
+      ],
+      "transcript": "Patient is requesting testosterone replacement. However, he has active prostate cancer on surveillance and PSA is rising. Standard of care contraindicates TRT in active prostate cancer.",
+      "expected_domain_logic": {
+        "guardrail_must_block": true,
+        "blocked_by_cds": true,
+        "safety_event_level": 1,
+        "no_approval_request_fired": true,
+        "blocked_medications_contain": ["testosterone"]
+      }
+    },
+    {
+      "id": "PEPTIDE-GLP1-T2DM-001",
+      "name": "Semaglutide Initiation for T2DM — Clean Workup",
+      "category": "glp1_t2dm",
+      "severity": "moderate",
+      "domain_logic_expected": true,
+      "patient": {
+        "first_name": "Angela",
+        "last_name": "Mitchell",
+        "dob": "1973-08-25",
+        "sex": "F",
+        "phone": "478-555-0421"
+      },
+      "problems": [
+        { "problem_name": "Type 2 Diabetes Mellitus", "icd10_code": "E11.9", "status": "active", "onset_date": "2021-04-01" },
+        { "problem_name": "Obesity Class I", "icd10_code": "E66.9", "status": "active", "onset_date": "2018-06-01" }
+      ],
+      "medications": [
+        { "medication_name": "Metformin", "dose": "1000mg", "route": "PO", "frequency": "BID", "status": "active" }
+      ],
+      "allergies": [],
+      "encounter": {
+        "encounter_type": "Office Visit - Diabetes",
+        "chief_complaint": "Diabetes follow-up, A1C up to 7.8",
+        "provider": "Dr. Renner"
+      },
+      "vitals": { "weight": 190, "height": 64, "bmi": 32.6 },
+      "labs": [
+        { "test_name": "Hemoglobin A1C", "result_value": "7.8", "units": "%", "abnormal_flag": "H", "status": "final" }
+      ],
+      "transcript": "A1C is 7.8 on max metformin. No personal or family history of medullary thyroid cancer. Plan to add semaglutide 0.25 mg weekly and titrate.",
+      "expected_domain_logic": {
+        "should_fire": ["pep-sema-t2dm-init"],
+        "should_not_fire": ["pep-mtc-contraindication", "pep-sema-gi-intolerance"],
+        "dosing_proposals_count": 1,
+        "requires_physician_approval": true
+      }
+    },
+    {
+      "id": "PEPTIDE-MTC-BLOCK-001",
+      "name": "GLP-1 Blocked by MTC Personal History",
+      "category": "glp1_safety",
+      "severity": "urgent",
+      "domain_logic_expected": true,
+      "patient": {
+        "first_name": "Patricia",
+        "last_name": "Wexler",
+        "dob": "1965-06-30",
+        "sex": "F"
+      },
+      "problems": [
+        { "problem_name": "Type 2 Diabetes Mellitus", "icd10_code": "E11.9", "status": "active" },
+        { "problem_name": "Medullary Thyroid Carcinoma (personal history)", "icd10_code": "C73", "status": "active" }
+      ],
+      "medications": [
+        { "medication_name": "Metformin", "dose": "1000mg", "frequency": "BID", "status": "active" }
+      ],
+      "allergies": [],
+      "encounter": {
+        "chief_complaint": "Diabetes not at goal",
+        "provider": "Dr. Renner"
+      },
+      "vitals": { "weight": 172, "height": 65 },
+      "labs": [
+        { "test_name": "Hemoglobin A1C", "result_value": "8.4", "units": "%", "abnormal_flag": "H", "status": "final" }
+      ],
+      "transcript": "A1C 8.4, considering GLP-1. Patient has personal history of medullary thyroid carcinoma — absolute contraindication.",
+      "expected_domain_logic": {
+        "should_fire": ["pep-mtc-contraindication"],
+        "should_not_fire": ["pep-sema-t2dm-init", "pep-tirz-obesity-init"],
+        "safety_block_expected": true,
+        "blocked_rule_types": ["peptide_initiation", "peptide_titration"]
+      }
+    },
+    {
+      "id": "FM-PATTERN-INSULIN-RESISTANCE-001",
+      "name": "Insulin Resistance Pattern — Informational Only",
+      "category": "metabolic",
+      "severity": "routine",
+      "domain_logic_expected": true,
+      "patient": {
+        "first_name": "Thomas",
+        "last_name": "Booker",
+        "dob": "1970-11-09",
+        "sex": "M"
+      },
+      "problems": [],
+      "medications": [],
+      "allergies": [],
+      "encounter": {
+        "chief_complaint": "Annual physical",
+        "provider": "Dr. Renner"
+      },
+      "vitals": { "weight": 210, "height": 70, "bmi": 30.1 },
+      "labs": [
+        { "test_name": "Fasting Insulin", "result_value": "18", "units": "uIU/mL", "abnormal_flag": "H", "status": "final" },
+        { "test_name": "Fasting Glucose", "result_value": "102", "units": "mg/dL", "abnormal_flag": "H", "status": "final" },
+        { "test_name": "Triglycerides", "result_value": "188", "units": "mg/dL", "abnormal_flag": "H", "status": "final" },
+        { "test_name": "HDL", "result_value": "32", "units": "mg/dL", "abnormal_flag": "L", "status": "final" }
+      ],
+      "transcript": "Fasting insulin 18, triglycerides 188, HDL 32 — insulin resistance pattern.",
+      "expected_domain_logic": {
+        "should_fire": ["fm-insulin-resistance-pattern"],
+        "pattern_event_expected": true,
+        "dosing_proposals_count": 0,
+        "educational_only_ok": true
+      }
+    },
+    {
+      "id": "HRT-E2-CONTRAIND-001",
+      "name": "Estradiol Contraindicated — History of Breast Cancer",
+      "category": "hrt_female",
+      "severity": "urgent",
+      "domain_logic_expected": true,
+      "patient": {
+        "first_name": "Susan",
+        "last_name": "Arlington",
+        "dob": "1963-12-05",
+        "sex": "F"
+      },
+      "problems": [
+        { "problem_name": "Breast Cancer (history)", "icd10_code": "Z85.3", "status": "active", "onset_date": "2020-05-01" }
+      ],
+      "medications": [],
+      "allergies": [],
+      "encounter": {
+        "chief_complaint": "Significant hot flashes, requesting HRT",
+        "provider": "Dr. Renner"
+      },
+      "vitals": {},
+      "labs": [],
+      "transcript": "Patient has significant vasomotor symptoms and is asking about hormone replacement. History of breast cancer is an absolute contraindication to systemic estrogen. Discussed non-hormonal options: paroxetine 7.5 mg, CBT, cognitive behavioral therapy for insomnia.",
+      "expected_domain_logic": {
+        "should_fire": ["hrt-e2-contraindicated"],
+        "should_not_fire": ["hrt-e2-menopausal-vasomotor"],
+        "safety_block_expected": true,
+        "alternative_recommendations_present": true
+      }
+    }
+  ]
+}

@@ -13,6 +13,7 @@ const MODULE_ORDER = [
   'physician',
   'scribe',
   'cds',
+  'domain_logic',
   'orders',
   'coding',
   'quality',
@@ -93,6 +94,18 @@ const MODULE_REGISTRY = Object.freeze({
     primaryOutputs: ['alerts', 'recommendations', 'suggested orders or referrals'],
     primaryHandoff: 'physician, orders, or quality',
     patientControlBoundary: 'Recommendation-only module; never diagnoses, treats, or silently changes care.'
+  }),
+  domain_logic: Object.freeze({
+    key: 'domain_logic',
+    displayName: 'Domain Logic (Functional Medicine / HRT / Peptide)',
+    workflowBand: 'encounter_support_specialty',
+    humanCounterpart: 'functional-medicine / HRT / peptide specialist',
+    autonomyTier: 3,
+    summary: 'Evaluates hormone, peptide, and functional-medicine patterns against evidence-based rules; proposes Tier 3 dosing changes gated on physician approval. Runs after CDS and treats every CDS urgent alert as an unconditional guardrail.',
+    primaryInputs: ['patient context', 'labs', 'medications', 'problem list', 'encounter transcript', 'cds output'],
+    primaryOutputs: ['dosing proposals (Tier 3 gated)', 'functional pattern events', 'specialty-medicine suggestions'],
+    primaryHandoff: 'physician (via DOSING_REVIEW_REQUEST), cds (via FUNCTIONAL_PATTERN_DETECTED), medivault_redflag',
+    patientControlBoundary: 'Draft-only and recommendation-only. Every dosing change routes through requestDosingApproval() → physician approval gate. Specialty rules CANNOT override standard-of-care CDS alerts; conflicting proposals are discarded and logged as Level-1 safety events.'
   }),
   orders: Object.freeze({
     key: 'orders',

@@ -52,6 +52,7 @@ The runtime should be understood as a 9-module clinical workflow system:
 | Orders | Clinical execution | 3 | Ordering workflow | Assemble labs, imaging, referrals, and prescriptions for approval |
 | Coding | Revenue / documentation | 2 | Coding / billing review | Generate E&M support, ICD-10 mapping, and completeness feedback |
 | Quality | Oversight | 2 | Quality / compliance operations | Track care gaps, measures, and compliance readiness |
+| Domain Logic | Encounter support (specialty) | 3 | Functional-medicine / HRT / peptide specialist | Evaluate hormone, peptide, and functional-medicine patterns; propose Tier 3 dosing changes gated on physician approval |
 
 Cross-cutting rule: patient-facing and patient-data-touching workflows must remain authenticated, auditable, and explicitly governed. Tier 3 modules never finalize care actions without physician approval.
 
@@ -197,6 +198,32 @@ Cross-cutting rule: patient-facing and patient-data-touching workflows must rema
 - Generate coding summary for billing staff
 
 **Runs after:** Scribe Agent and Physician Agent complete the note.
+
+---
+
+### Agent 7: Domain Logic Agent (Functional Medicine / HRT / Peptide)
+
+**Role:** Specialty-medicine reasoning layer. Evaluates hormone replacement, peptide therapy, and functional-medicine patterns against clinician-authored rules that fall outside mainstream primary-care guidelines.
+
+**Tier:** 3 (physician-in-the-loop — nothing executes without explicit approval).
+
+**Scope of Authority:**
+- Load rules from `server/domain/rules/*.js` (HRT, peptides, functional-medicine patterns)
+- Correlate lab results, problem list, medications, and transcript against rule evidence
+- Draft dosing recommendations with mandatory `evidence_source` citations
+- Route every dosing change through `requestDosingApproval()` → `DOSING_REVIEW_REQUEST` to the Physician Agent
+- Emit `FUNCTIONAL_PATTERN_DETECTED` for informational findings (metabolic, adrenal, methylation, etc.) that the CDS Agent and MediVault Red Flag Agent can act on
+- Never place orders, never modify doses, and never write to the permanent record without the physician returning an approval
+
+**Hard boundaries:**
+- Drug interaction checks run *before* the Tier 3 gate; any rule tagged as high-interaction is auto-rejected and logged as a Level-1 safety event.
+- Every rule must carry an `evidence_source` field. Rules without citations fail the rule loader.
+- The agent never triggers on an ambiguous transcript alone — it requires either a lab value, a stated medication, or a stated problem in structured context before firing.
+
+**Why this module is separate from CDS:**
+CDS targets mainstream primary-care guidelines (USPSTF, CDC, ACC/AHA) and runs at Tier 2. Functional medicine, HRT, and peptide therapy have narrower evidence bases, tighter safety windows, and different citation trails. Mixing them into the CDS engine would blur those boundaries and make the audit trail harder to defend. Keeping the Domain Logic Agent separate lets each module evolve its own knowledge base without disturbing the other.
+
+**Runs:** In the encounter pipeline after Scribe extracts structured data, in parallel with CDS.
 
 ---
 
@@ -356,6 +383,54 @@ Patient Contact              Scribe Agent (during visit)
 - `QUALITY_GAP` — Quality Agent → Physician Agent (care gap identified)
 - `PATIENT_LETTER` — Physician Agent → Patient (via portal/email/text)
 - `BRIEFING_READY` — Front Desk Agent → Provider screen (pre-visit prep complete)
+
+**CATC cross-module data flows (wired in `server/agents/message-bus.js`):**
+- `NOTE_SIGNED` — Scribe → Coding + Quality (finalized note triggers downstream)
+- `ENCOUNTER_COMPLETED` — Physician → MediVault (vault timeline entry)
+- `MEDS_RECONCILED` — MA → MedSafe + MediVault Reconciliation
+- `CARE_GAP_DETECTED` — Quality → Physician + Patient Link (outreach trigger)
+- `TRANSLATION_READY` — ClinicalAssist → Patient Link (patient-readable summary available)
+- `PATIENT_MESSAGE_SENT` — Patient Link → MediVault (vault timeline entry)
+- `PRIOR_AUTH_UPDATE` — AdminFlow → MediVault (vault timeline entry)
+- `REFERRAL_STATUS` — AdminFlow → MediVault (vault timeline entry)
+- `DOCUMENT_INGESTED` — MediVault Ingestion → MediVault Dedup
+- `DEDUP_COMPLETE` — MediVault Dedup → MediVault Reconciliation
+- `RED_FLAG_ALERT` — MediVault Red Flag → Physician
+- `SPECIALTY_PACKET_READY` — MediVault Packaging → ClinicalAssist Translation
+- `PRESCRIPTION_CREATED` — Orders → Event Bus (external webhook)
+- `LAB_RESULTED` — Lab → Patient Link + MediVault Ingestion
+
+**Functional-medicine / HRT / peptide dosing events (Tier 3 MD-in-loop):**
+- `DOSING_REVIEW_REQUEST` — Domain Logic → Physician (proposed dosing change, requires approval)
+- `DOSING_APPROVED` — Physician → Orders (execute) + MediVault (vault timeline audit)
+- `DOSING_REJECTED` — Physician → MediVault Red Flag (logged as Level-1 safety event)
+- `FUNCTIONAL_PATTERN_DETECTED` — Domain Logic → CDS + MediVault Red Flag (informational pattern signal)
+
+```
+            ┌─────────────────────────────┐
+            │      Domain Logic Agent     │
+            │   (Tier 3, autonomy gated)  │
+            └──────────┬──────────────────┘
+                       │
+          ┌────────────┴──────────────┐
+          ▼                           ▼
+  DOSING_REVIEW_REQUEST    FUNCTIONAL_PATTERN_DETECTED
+          │                           │
+          ▼                    ┌──────┴──────┐
+   Physician Agent             ▼             ▼
+          │                   CDS       MediVault
+   (approve / reject)       Agent       Red Flag
+          │
+    ┌─────┴─────┐
+    ▼           ▼
+ Orders     MediVault
+ Agent      Red Flag
+(DOSING_    (DOSING_
+ APPROVED)   REJECTED,
+             SAFETY_LEVEL_1)
+```
+
+Every branch of this diagram produces an audit-log entry via `BaseAgent.audit()`. The approved path writes `ACTION_TYPE.RECOMMENDATION`; the rejected path writes `ACTION_TYPE.OVERRIDE` plus a `reportSafetyEvent(SAFETY_LEVEL.LEVEL_1)`. The Physician Agent has final authority at every gate, and timeouts fail safe (default deny).
 
 ---
 

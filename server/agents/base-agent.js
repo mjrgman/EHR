@@ -357,6 +357,173 @@ class BaseAgent extends EventEmitter {
   }
 
   /**
+   * Request physician approval for a dosing change.
+   *
+   * Specialized Tier 3 gate for HRT / peptide / functional-medicine dosing adjustments
+   * where safety margins are narrow and errors have significant consequences. Use this
+   * helper instead of a raw `sendRequest` so every dosing decision is audited with the
+   * same structure and every rejection is recorded as a safety event.
+   *
+   * Flow:
+   *   1. Validate that the dosing change carries medication, proposedDose, and rationale
+   *   2. Audit the escalation via ACTION_TYPE.ESCALATION
+   *   3. Send DOSING_REVIEW_REQUEST to the physician agent (priority 5, routed via bus)
+   *   4. Await the physician's response (default 1 hour)
+   *   5. On approval: audit as RECOMMENDATION approved, broadcast DOSING_APPROVED to orders
+   *   6. On rejection: report LEVEL_1 safety event, broadcast DOSING_REJECTED to medivault_redflag
+   *   7. On timeout / bus error: report LEVEL_2 safety event, return approved=false (fail-safe)
+   *
+   * @param {Object} dosingChange - { medication, currentDose, proposedDose, route, frequency, rationale, evidenceSource }
+   * @param {Object} context - Patient/encounter context ({ patient, encounter, ... })
+   * @param {Object} options - { timeoutMs: number (default 3600000 = 1 hour) }
+   * @returns {Promise<{ approved: boolean, approvalId: string, response: Object }>}
+   */
+  async requestDosingApproval(dosingChange, context = {}, options = {}) {
+    const { timeoutMs = 3_600_000 } = options;
+
+    // Validate required fields — a dosing change without these is dangerous
+    const requiredFields = ['medication', 'proposedDose', 'rationale'];
+    for (const field of requiredFields) {
+      if (!dosingChange || !dosingChange[field]) {
+        throw new Error(`${this.name}.requestDosingApproval: missing required field "${field}"`);
+      }
+    }
+
+    // Evidence source is strongly encouraged — flag (but don't block) its absence
+    if (!dosingChange.evidenceSource) {
+      this.reportSafetyEvent(
+        3,
+        `Dosing approval requested without evidence source for ${dosingChange.medication}`,
+        context
+      );
+    }
+
+    // Refuse to silently bypass Tier 3 — warn if called from a lower-tier agent
+    if (this.autonomyTier !== AUTONOMY_TIER.TIER_3) {
+      console.warn(
+        `[${this.name}] requestDosingApproval called from Tier ${this.autonomyTier} agent — ` +
+        `forcing physician approval regardless of agent tier`
+      );
+    }
+
+    // Audit the escalation before sending — so we have a record even if the request times out
+    const auditEntry = this.audit(
+      ACTION_TYPE.ESCALATION,
+      {
+        reason: 'dosing_change_requires_physician_approval',
+        dosingChange,
+        requestedBy: this.name,
+        tier: this.autonomyTier
+      },
+      context
+    );
+
+    if (!this.messageBus) {
+      throw new Error(`${this.name}: messageBus not initialized — cannot request dosing approval`);
+    }
+
+    try {
+      const response = await this.sendRequest(
+        'physician',
+        'DOSING_REVIEW_REQUEST',
+        {
+          requestingAgent: this.name,
+          auditEntryId: auditEntry.id,
+          dosingChange,
+          context: {
+            patientId: context.patient?.id,
+            encounterId: context.encounter?.id
+          }
+        },
+        {
+          timeout: timeoutMs,
+          priority: 5, // Highest — dosing reviews are time-sensitive
+          patientId: context.patient?.id,
+          encounterId: context.encounter?.id
+        }
+      );
+
+      const payload = response?.payload
+        ? (typeof response.payload === 'string' ? JSON.parse(response.payload) : response.payload)
+        : {};
+      const approved = Boolean(payload.approved);
+
+      if (approved) {
+        // Physician approved — record and broadcast so Orders agent can execute
+        this.audit(
+          ACTION_TYPE.RECOMMENDATION,
+          {
+            status: 'approved_by_physician',
+            dosingChange,
+            approverId: payload.approverId || null,
+            approvalNotes: payload.notes || null
+          },
+          context
+        );
+
+        await this.sendMessage(
+          'orders',
+          'DOSING_APPROVED',
+          {
+            dosingChange,
+            approvedBy: payload.approverId || null,
+            originalAuditEntryId: auditEntry.id
+          },
+          {
+            patientId: context.patient?.id,
+            encounterId: context.encounter?.id,
+            priority: 5
+          }
+        );
+      } else {
+        // Physician rejected — LEVEL_1 safety event + broadcast to red flag tracking
+        const rejectionReason = payload.reason || 'no_reason_provided';
+        this.reportSafetyEvent(
+          1,
+          `Dosing change rejected by physician: ${dosingChange.medication} ` +
+          `${dosingChange.currentDose || 'n/a'} → ${dosingChange.proposedDose}. ` +
+          `Reason: ${rejectionReason}`,
+          context
+        );
+
+        await this.sendMessage(
+          'medivault_redflag',
+          'DOSING_REJECTED',
+          {
+            dosingChange,
+            rejectedBy: payload.approverId || null,
+            reason: rejectionReason,
+            originalAuditEntryId: auditEntry.id
+          },
+          {
+            patientId: context.patient?.id,
+            encounterId: context.encounter?.id,
+            priority: 4
+          }
+        );
+      }
+
+      return {
+        approved,
+        approvalId: auditEntry.id,
+        response: payload
+      };
+    } catch (err) {
+      // Timeout or bus error — fail safe (treat as rejection) and log the error
+      this.reportSafetyEvent(
+        2,
+        `Dosing approval request failed (treating as rejection): ${err.message}`,
+        context
+      );
+      return {
+        approved: false,
+        approvalId: auditEntry.id,
+        response: { error: err.message }
+      };
+    }
+  }
+
+  /**
    * Get governance info for the frontend.
    */
   getGovernanceInfo() {
