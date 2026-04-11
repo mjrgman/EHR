@@ -58,3 +58,43 @@ export function isHrtRelevant(suggestion) {
   if (!hay) return false;
   return HRT_KEYWORDS.some((kw) => hay.includes(kw));
 }
+
+/**
+ * Category → keyword map for voice-routing the encounter transcript to the
+ * HRT/Peptide tab. MUST stay in byte-for-byte parity with the server's
+ * `DOMAIN_KEYWORDS` in `server/agents/domain-logic-agent.js` — a parity test
+ * in `test/run-tests.js` enforces this. Drift = server routes to the Domain
+ * Logic agent but the client UI never focuses the HRT tab.
+ *
+ * Note on relationship to `HRT_KEYWORDS`: the flat `HRT_KEYWORDS` list above
+ * is broader (includes dhea, thyroid, tsh, peptide, etc.) and is used for
+ * filtering CDS suggestions into the HRT tab. `DOMAIN_KEYWORDS` is narrower
+ * and categorized — it drives voice routing decisions where we need to know
+ * WHICH domain matched, not just whether something matched.
+ */
+export const DOMAIN_KEYWORDS = {
+  hrt_male: ['testosterone', 'trt', 'hypogonadism', 'low t', 'androgel'],
+  hrt_female: ['estradiol', 'estrogen', 'progesterone', 'menopause', 'hormone replacement', 'hrt', 'vasomotor', 'hot flashes'],
+  glp1: ['semaglutide', 'ozempic', 'wegovy', 'tirzepatide', 'mounjaro', 'zepbound', 'glp-1', 'glp1', 'weight loss injection'],
+  gh_peptides: ['sermorelin', 'ipamorelin', 'cjc-1295', 'tesamorelin', 'growth hormone peptide'],
+  research_peptides: ['bpc-157', 'bpc157', 'tb-500', 'research peptide'],
+  functional_med: ['functional medicine', 'adrenal fatigue', 'methylation', 'mthfr', 'leaky gut', 'mitochondrial', 'hpa axis', 'hashimoto']
+};
+
+/**
+ * Detect which HRT/peptide/functional-med categories a block of text mentions.
+ * Mirrors the server's `DomainLogicAgent._classifyDomain` exactly so the
+ * client-side voice router makes the same routing decision the server will.
+ *
+ * @param {string|null|undefined} text — encounter transcript or note fragment
+ * @returns {Array<string>} category keys from DOMAIN_KEYWORDS that matched
+ */
+export function detectHrtCategories(text) {
+  if (!text) return [];
+  const lowered = String(text).toLowerCase();
+  const matches = [];
+  for (const [category, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    if (keywords.some((k) => lowered.includes(k))) matches.push(category);
+  }
+  return matches;
+}

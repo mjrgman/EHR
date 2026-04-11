@@ -3766,6 +3766,93 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
   });
 
   // ==========================================
+  // Phase 3b: hrt-keywords — transcript classification (voice routing)
+  //
+  // `detectHrtCategories(text)` scans an encounter transcript for any
+  // DOMAIN_KEYWORDS category and returns the matched category names. This
+  // is the client-side mirror of server/agents/domain-logic-agent.js
+  // `_classifyDomain()`; the two MUST return the same categories for the
+  // same text, otherwise voice routing fires on the server but the UI
+  // goes blind. A parity test below catches drift at commit time.
+  // ==========================================
+
+  await test('Phase 3b: hrt-keywords — DOMAIN_KEYWORDS is a category map of string arrays', async () => {
+    const { DOMAIN_KEYWORDS } = await import('../src/utils/hrt-keywords.mjs');
+    assertEqual(typeof DOMAIN_KEYWORDS, 'object');
+    assertEqual(DOMAIN_KEYWORDS !== null, true);
+    for (const [category, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+      assertEqual(typeof category, 'string');
+      assertEqual(Array.isArray(keywords), true);
+      assertEqual(keywords.length > 0, true);
+      for (const kw of keywords) {
+        assertEqual(typeof kw, 'string');
+        assertEqual(kw, kw.toLowerCase());
+      }
+    }
+  });
+
+  await test('Phase 3b: hrt-keywords — DOMAIN_KEYWORDS matches server DOMAIN_KEYWORDS (parity)', async () => {
+    // Drift between client and server DOMAIN_KEYWORDS means voice routing
+    // fires on the server but the UI tab never auto-focuses (or vice versa).
+    // This test is the commit-time guardrail.
+    const { DOMAIN_KEYWORDS: clientMap } = await import('../src/utils/hrt-keywords.mjs');
+    const { DOMAIN_KEYWORDS: serverMap } = require('../server/agents/domain-logic-agent');
+    const clientKeys = Object.keys(clientMap).sort();
+    const serverKeys = Object.keys(serverMap).sort();
+    assertEqual(JSON.stringify(clientKeys), JSON.stringify(serverKeys));
+    for (const cat of clientKeys) {
+      assertEqual(
+        JSON.stringify([...clientMap[cat]].sort()),
+        JSON.stringify([...serverMap[cat]].sort())
+      );
+    }
+  });
+
+  await test('Phase 3b: hrt-keywords — detectHrtCategories returns [] for empty / null', async () => {
+    const { detectHrtCategories } = await import('../src/utils/hrt-keywords.mjs');
+    assertEqual(JSON.stringify(detectHrtCategories('')), '[]');
+    assertEqual(JSON.stringify(detectHrtCategories(null)), '[]');
+    assertEqual(JSON.stringify(detectHrtCategories(undefined)), '[]');
+  });
+
+  await test('Phase 3b: hrt-keywords — detectHrtCategories matches testosterone -> hrt_male', async () => {
+    const { detectHrtCategories } = await import('../src/utils/hrt-keywords.mjs');
+    const cats = detectHrtCategories('Start testosterone 200 mg IM every two weeks');
+    assertEqual(cats.includes('hrt_male'), true);
+  });
+
+  await test('Phase 3b: hrt-keywords — detectHrtCategories matches semaglutide -> glp1', async () => {
+    const { detectHrtCategories } = await import('../src/utils/hrt-keywords.mjs');
+    const cats = detectHrtCategories('Prescribe semaglutide 0.25 mg subcutaneously weekly');
+    assertEqual(cats.includes('glp1'), true);
+  });
+
+  await test('Phase 3b: hrt-keywords — detectHrtCategories matches menopause -> hrt_female', async () => {
+    const { detectHrtCategories } = await import('../src/utils/hrt-keywords.mjs');
+    const cats = detectHrtCategories('Patient reports vasomotor symptoms and hot flashes from menopause');
+    assertEqual(cats.includes('hrt_female'), true);
+  });
+
+  await test('Phase 3b: hrt-keywords — detectHrtCategories is case-insensitive', async () => {
+    const { detectHrtCategories } = await import('../src/utils/hrt-keywords.mjs');
+    const cats = detectHrtCategories('MOUNJARO titration next visit');
+    assertEqual(cats.includes('glp1'), true);
+  });
+
+  await test('Phase 3b: hrt-keywords — detectHrtCategories returns multiple categories when overlapping', async () => {
+    const { detectHrtCategories } = await import('../src/utils/hrt-keywords.mjs');
+    const cats = detectHrtCategories('Combine testosterone replacement with semaglutide for the weight goal');
+    assertEqual(cats.includes('hrt_male'), true);
+    assertEqual(cats.includes('glp1'), true);
+  });
+
+  await test('Phase 3b: hrt-keywords — detectHrtCategories returns [] for hypertension-only transcript', async () => {
+    const { detectHrtCategories } = await import('../src/utils/hrt-keywords.mjs');
+    const cats = detectHrtCategories('Blood pressure 160/95, start lisinopril 10 mg daily');
+    assertEqual(JSON.stringify(cats), '[]');
+  });
+
+  // ==========================================
   // RESULTS
   // ==========================================
 

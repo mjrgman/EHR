@@ -6,6 +6,7 @@ import { useWorkflow } from '../hooks/useWorkflow';
 import { useEncounter } from '../hooks/useEncounter';
 import { useCDS } from '../hooks/useCDS';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
+import { useHRTKeywords } from '../hooks/useHRTKeywords';
 import { useToast } from '../components/common/Toast';
 import PatientBanner from '../components/patient/PatientBanner';
 import ProblemList from '../components/patient/ProblemList';
@@ -311,6 +312,26 @@ export default function EncounterPage() {
     () => (pending || []).filter(isHrtRelevant).length,
     [pending]
   );
+
+  // Voice routing: watch the transcript for hormone/peptide keywords. This is
+  // a UI hint only — the server's DomainLogicAgent._classifyDomain is still
+  // the authoritative classifier. See `src/hooks/useHRTKeywords.js`.
+  const hrtDomain = useHRTKeywords(transcript);
+
+  // Auto-focus the HRT tab the FIRST time hormone/peptide content is detected.
+  // We use a ref so the focus steal happens exactly once per encounter load —
+  // users who manually switch away afterward stay where they put themselves.
+  // Resets when the encounter id changes (e.g., navigating to a new encounter).
+  const hrtAutoFocusedRef = useRef(false);
+  useEffect(() => {
+    hrtAutoFocusedRef.current = false;
+  }, [eid]);
+  useEffect(() => {
+    if (hrtDomain.hasHrtContent && !hrtAutoFocusedRef.current) {
+      hrtAutoFocusedRef.current = true;
+      setMobileTab('hrt');
+    }
+  }, [hrtDomain.hasHrtContent]);
 
   // --- Initialize from encounter data ---
   useEffect(() => {
