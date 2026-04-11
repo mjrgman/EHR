@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api, { safeLog } from '../api/client';
+import { exportPatient as exportMediVaultPatient } from '../api/medivault';
 import { usePatient } from '../hooks/usePatient';
 import { useWorkflow } from '../hooks/useWorkflow';
 import { useEncounter } from '../hooks/useEncounter';
@@ -472,6 +473,25 @@ export default function EncounterPage() {
     }
   }
 
+  // Phase 3c: MediVault patient-owned export.
+  // Hands the user a FHIR R4 Bundle (.json) of the full clinical record.
+  // Both the route handler AND the global audit middleware log the access
+  // — the client doesn't need to track anything locally.
+  async function handleMediVaultExport() {
+    const pid = encounter?.patient_id || patient?.id;
+    if (!pid) {
+      toast.error('Cannot export: patient not loaded yet');
+      return;
+    }
+    try {
+      const { filename } = await exportMediVaultPatient(pid);
+      toast.success(`Exported ${filename}`);
+    } catch (e) {
+      safeLog.error('MediVault export failed:', e);
+      toast.error('Export failed: ' + e.message);
+    }
+  }
+
   // --- Order creation handlers ---
   async function handleCreateRx(data) {
     try {
@@ -878,7 +898,7 @@ export default function EncounterPage() {
         </CardBody>
       </Card>
 
-      {/* Review & Sign Button */}
+      {/* Review & Sign + MediVault Export Buttons */}
       <div className="flex gap-3 pb-4">
         <TouchButton
           variant="success"
@@ -887,6 +907,15 @@ export default function EncounterPage() {
           disabled={!canReviewSign}
         >
           Review &amp; Sign
+        </TouchButton>
+        <TouchButton
+          variant="secondary"
+          onClick={handleMediVaultExport}
+          disabled={!(encounter?.patient_id || patient?.id)}
+          title="Download this patient's full record as a FHIR R4 Bundle (patient-owned)"
+          data-testid="medivault-export-btn"
+        >
+          Export (MediVault)
         </TouchButton>
       </div>
     </div>

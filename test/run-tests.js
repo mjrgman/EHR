@@ -4121,6 +4121,229 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
     }
   });
 
+  // ==========================================================
+  // PHASE 3c: MediVault Patient Export (buildPatientBundle)
+  //
+  // Phase 3c of the glistening-forging-frog plan: patient-owned
+  // export endpoint. The core is buildPatientBundle(patientId)
+  // in server/medivault/index.js — it assembles a FHIR R4 Bundle
+  // of type 'collection' from the patient's core clinical row
+  // plus MediVault-owned artifacts (vault_documents, specialty
+  // packets, translations).
+  //
+  // These tests build up the contract: shape first, then each
+  // resource category, then that the route wires it up with the
+  // right FHIR content type and attachment disposition.
+  // ==========================================================
+  console.log('\nPHASE 3c: MEDIVAULT PATIENT EXPORT (buildPatientBundle)\n');
+
+  await test('MediVault Export: buildPatientBundle returns a FHIR R4 Bundle (type=collection) for Sarah', async () => {
+    const medivault = require('../server/medivault');
+    assert(
+      typeof medivault.buildPatientBundle === 'function',
+      'server/medivault/index.js must export buildPatientBundle(patientId)'
+    );
+
+    const bundle = await medivault.buildPatientBundle(sarahId);
+    assert(bundle, 'buildPatientBundle must return a Bundle');
+    assertEqual(bundle.resourceType, 'Bundle', 'resourceType must be "Bundle"');
+    assertEqual(bundle.type, 'collection', 'Patient export Bundles must be type "collection" (not "searchset")');
+    assert(Array.isArray(bundle.entry), 'Bundle.entry must be an array');
+    assert(bundle.entry.length > 0, 'Bundle.entry must contain at least the Patient resource');
+    // Timestamp required by FHIR for transactional bundles but recommended for collection too
+    assert(typeof bundle.timestamp === 'string' && bundle.timestamp.length > 0, 'Bundle.timestamp must be a non-empty ISO string');
+
+    // First entry is the Patient resource — everything else references it
+    const patientEntry = bundle.entry.find((e) => e.resource?.resourceType === 'Patient');
+    assert(patientEntry, 'Bundle must contain a Patient entry');
+    assertEqual(patientEntry.resource.id, String(sarahId), 'Patient resource id must match the requested patientId');
+  });
+
+  await test('MediVault Export: Bundle includes a FHIR Condition entry for each active problem (Sarah has 4)', async () => {
+    const medivault = require('../server/medivault');
+    const bundle = await medivault.buildPatientBundle(sarahId);
+    const conditions = bundle.entry.filter((e) => e.resource?.resourceType === 'Condition');
+    // Sarah seed data gives her 4 problems — this was asserted in the earlier "Retrieve patient with full clinical data" test
+    assert(conditions.length >= 4, `Expected at least 4 Condition entries for Sarah, got ${conditions.length}`);
+    // Every Condition must reference the Patient entry by full URL so the
+    // bundle is internally consistent — a downstream consumer can walk the
+    // references without needing an external lookup.
+    for (const c of conditions) {
+      assert(c.resource.subject, 'Condition.subject reference is required');
+      assert(
+        /Patient\//.test(c.resource.subject.reference || ''),
+        `Condition.subject.reference must name the Patient, got "${c.resource.subject.reference}"`
+      );
+    }
+  });
+
+  await test('MediVault Export: Bundle includes AllergyIntolerance, MedicationRequest, and Observation entries', async () => {
+    const medivault = require('../server/medivault');
+    const bundle = await medivault.buildPatientBundle(sarahId);
+
+    // Sarah has at least one seeded allergy — "Retrieve patient with full clinical data" test earlier expects allergies
+    const allergies = bundle.entry.filter((e) => e.resource?.resourceType === 'AllergyIntolerance');
+    assert(allergies.length >= 1, `Expected at least 1 AllergyIntolerance entry for Sarah, got ${allergies.length}`);
+    for (const a of allergies) {
+      assert(
+        /Patient\//.test(a.resource.patient?.reference || ''),
+        `AllergyIntolerance.patient.reference must name the Patient, got "${a.resource.patient?.reference}"`
+      );
+    }
+
+    // Sarah has active medications
+    const rxs = bundle.entry.filter((e) => e.resource?.resourceType === 'MedicationRequest');
+    assert(rxs.length >= 1, `Expected at least 1 MedicationRequest entry for Sarah, got ${rxs.length}`);
+    for (const rx of rxs) {
+      assert(
+        /Patient\//.test(rx.resource.subject?.reference || ''),
+        `MedicationRequest.subject.reference must name the Patient, got "${rx.resource.subject?.reference}"`
+      );
+    }
+
+    // Sarah has labs and vitals — both map to Observation
+    const observations = bundle.entry.filter((e) => e.resource?.resourceType === 'Observation');
+    assert(observations.length >= 1, `Expected at least 1 Observation entry for Sarah, got ${observations.length}`);
+    // At least one Observation should have category 'laboratory' (from labs)
+    const hasLabObservation = observations.some((o) =>
+      (o.resource.category || []).some((cat) =>
+        (cat.coding || []).some((c) => c.code === 'laboratory')
+      )
+    );
+    assert(hasLabObservation, 'Bundle must contain at least one Observation with category=laboratory (from labs)');
+  });
+
+  // ------------------------------------------------------------
+  // Route: GET /api/medivault/export/:patientId
+  //
+  // Mirrors the LabCorp route test harness: spin up a tiny Express
+  // app, inject req.user via middleware, mount the route module,
+  // hit it over HTTP and inspect status + headers + body.
+  // ------------------------------------------------------------
+
+  const mvHttp = require('http');
+  const mvExpress = require('express');
+  let mvRoutesApp, mvRoutesServer, mvRoutesPort, mvRoutesBase;
+  let _mvRoutesLoadOk = true;
+  let _mvRoutesLoadErr = null;
+  try {
+    mvRoutesApp = mvExpress();
+    mvRoutesApp.use(mvExpress.json());
+    // Same injection pattern as the LabCorp tests — req.user is what
+    // auth.requireAuth would leave after a real JWT verify.
+    mvRoutesApp.use((req, _res, next) => {
+      req.user = { sub: 1, username: 'medivault-test-user', role: 'physician' };
+      next();
+    });
+    const mvRoutes = require('../server/routes/medivault-routes');
+    mvRoutes.mountMediVaultRoutes(mvRoutesApp, { db });
+    mvRoutesServer = await new Promise((resolve) => {
+      const srv = mvRoutesApp.listen(0, '127.0.0.1', () => resolve(srv));
+    });
+    mvRoutesPort = mvRoutesServer.address().port;
+    mvRoutesBase = `http://127.0.0.1:${mvRoutesPort}`;
+  } catch (err) {
+    _mvRoutesLoadOk = false;
+    _mvRoutesLoadErr = err;
+  }
+
+  function mvRoutesRequest({ method = 'GET', path, body = null, acceptBinary = false }) {
+    return new Promise((resolve, reject) => {
+      const url = new URL(mvRoutesBase + path);
+      const opts = {
+        method,
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname + url.search,
+        headers: { 'Accept': acceptBinary ? '*/*' : 'application/fhir+json, application/json' }
+      };
+      let bodyStr = null;
+      if (body) {
+        bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+        opts.headers['Content-Type'] = 'application/json';
+        opts.headers['Content-Length'] = Buffer.byteLength(bodyStr);
+      }
+      const req = mvHttp.request(opts, (res) => {
+        let raw = '';
+        res.on('data', (c) => { raw += c; });
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(raw), headers: res.headers, raw }); }
+          catch { resolve({ status: res.statusCode, body: raw, headers: res.headers, raw }); }
+        });
+      });
+      req.on('error', reject);
+      if (bodyStr) req.write(bodyStr);
+      req.end();
+    });
+  }
+
+  await test('MediVault Route: server/routes/medivault-routes.js loads and mounts cleanly', async () => {
+    if (!_mvRoutesLoadOk) {
+      throw _mvRoutesLoadErr || new Error('mountMediVaultRoutes failed to load');
+    }
+    assert(mvRoutesBase, 'mvRoutesBase must be populated after server starts');
+  });
+
+  await test('MediVault Route: GET /api/medivault/export/:patientId returns 200 with FHIR Bundle + attachment disposition', async () => {
+    const res = await mvRoutesRequest({ method: 'GET', path: `/api/medivault/export/${sarahId}` });
+    assertEqual(res.status, 200, `expected 200, got ${res.status}: ${typeof res.body === 'string' ? res.body : JSON.stringify(res.body).slice(0, 200)}`);
+
+    // FHIR content type
+    const ct = (res.headers['content-type'] || '').toLowerCase();
+    assert(
+      ct.includes('application/fhir+json') || ct.includes('application/json'),
+      `expected FHIR JSON content-type, got "${ct}"`
+    );
+
+    // Attachment disposition so browser downloads instead of rendering
+    const disp = res.headers['content-disposition'] || '';
+    assert(disp.startsWith('attachment'), `expected Content-Disposition: attachment, got "${disp}"`);
+    assert(
+      new RegExp(`medivault-${sarahId}-`).test(disp),
+      `expected filename to contain "medivault-${sarahId}-<date>.json", got "${disp}"`
+    );
+
+    // Body is a FHIR Bundle
+    assert(res.body && typeof res.body === 'object', 'response body must be a parsed JSON object');
+    assertEqual(res.body.resourceType, 'Bundle', 'response body must be a FHIR Bundle');
+    assertEqual(res.body.type, 'collection', 'response Bundle type must be "collection"');
+    assert(Array.isArray(res.body.entry) && res.body.entry.length > 0, 'Bundle.entry must be non-empty');
+  });
+
+  await test('MediVault Route: GET /api/medivault/export/:patientId returns 404 for unknown patient', async () => {
+    const res = await mvRoutesRequest({ method: 'GET', path: '/api/medivault/export/99999999' });
+    assertEqual(res.status, 404, `expected 404 for missing patient, got ${res.status}`);
+  });
+
+  await test('MediVault Route: export writes a vault_access_log row naming the caller', async () => {
+    // Clear prior rows for determinism — the LabCorp test suite above may
+    // have added unrelated access records for Sarah.
+    await db.dbRun('DELETE FROM vault_access_log WHERE patient_id = ? AND access_type = ?', [sarahId, 'EXPORT']);
+
+    const res = await mvRoutesRequest({ method: 'GET', path: `/api/medivault/export/${sarahId}` });
+    assertEqual(res.status, 200, 'export must succeed before we can assert the audit row');
+
+    const rows = await db.dbAll(
+      'SELECT * FROM vault_access_log WHERE patient_id = ? AND access_type = ? ORDER BY id DESC',
+      [sarahId, 'EXPORT']
+    );
+    assert(rows.length >= 1, 'export route must write a vault_access_log row with access_type=EXPORT');
+    const row = rows[0];
+    assertEqual(String(row.patient_id), String(sarahId), 'vault_access_log.patient_id must match');
+    // The accessed_by column is a free-text field in medivault/index.js schema
+    // — we want the username (or user id) of the caller so a later audit can
+    // answer "who exported this patient's data on date X".
+    assert(
+      (row.accessed_by || '').length > 0,
+      'vault_access_log.accessed_by must be populated (not null/empty) — it names the caller'
+    );
+  });
+
+  // Close the MediVault test server so the process can exit cleanly
+  if (mvRoutesServer) {
+    await new Promise((resolve) => mvRoutesServer.close(resolve));
+  }
+
   // ==========================================
   // RESULTS
   // ==========================================

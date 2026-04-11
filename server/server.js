@@ -23,6 +23,7 @@ const eventBusRouter = require('./integrations/event-bus').router;
 const patientVoiceRouter = require('./integrations/patient-voice').router;
 const patientPortalRouter = require('./routes/patient-portal');
 const { mountLabCorpRoutes } = require('./routes/labcorp-routes');
+const { mountMediVaultRoutes } = require('./routes/medivault-routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -193,6 +194,14 @@ app.use('/api/patient-portal', patientPortalRouter);
 // endpoint tolerates a missing req.user because OAuth2 redirects don't
 // carry the app's JWT — it derives userId from the pending-state record.
 mountLabCorpRoutes(app, { db });
+
+// MediVault patient-owned export (Phase 3c).
+// mountMediVaultRoutes registers:
+//   GET /api/medivault/export/:patientId  → FHIR R4 Bundle (collection)
+// The route uses the same auth pipeline as all other /api/* routes and the
+// audit-logger PHI_ROUTES entry (audit-logger.js) captures each export as a
+// vault_export READ for the central audit trail.
+mountMediVaultRoutes(app, { db });
 
 // ==========================================
 // PATIENT ENDPOINTS

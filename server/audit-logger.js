@@ -88,6 +88,15 @@ const PHI_ROUTES = {
   // --- Dashboard (aggregated, contains patient list) ---
   'GET /api/dashboard':                           { resource_type: 'dashboard', action: 'READ', phi: true, phiFields: ['patient_list'] },
 
+  // --- MediVault patient export (Phase 3c) ---
+  // This endpoint ships the patient's full clinical record as a FHIR Bundle.
+  // It MUST be classified as PHI so the audit-logger middleware captures the
+  // export in the central audit_log — separately from the vault_access_log
+  // row the route itself writes. Two logs, two purposes: audit_log answers
+  // "who hit this endpoint when", vault_access_log answers "how many times
+  // has this specific patient's data been exported".
+  'GET /api/medivault/export/:patientId':         { resource_type: 'vault_export', action: 'READ', phi: true, phiFields: ['fhir_bundle'], extractPatientId: (req) => req.params.patientId },
+
   // --- System ---
   'GET /api/health':                              { resource_type: 'system', action: 'READ', phi: false },
 };
