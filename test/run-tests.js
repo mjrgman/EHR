@@ -3853,6 +3853,275 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
   });
 
   // ==========================================
+  // STANDARD-OF-CARE GUARDRAIL — REGRESSION TESTS
+  //
+  // This is THE most critical invariant in the Domain Logic layer:
+  //   "Standard medical protocols are always the guardrails. No specialty
+  //   rule (HRT, peptide, functional-medicine) may override a CDS urgent
+  //   alert, drug interaction, or contraindication."
+  //
+  // The code for this lives at server/agents/domain-logic-agent.js:
+  //   - dependsOn: ['cds']  (line 43)
+  //   - fail-closed on CDS error (lines 167-202)
+  //   - _extractCDSGuardrails()  (lines 91-121)
+  //   - _conflictWithGuardrails()  (lines 131-146)
+  //   - process() filter loop     (lines 241-271)
+  //
+  // And the feedback memory at memory/feedback_standard_of_care_guardrails.md.
+  //
+  // These tests load `test/scenarios/functional-med-scenarios.json` and
+  // drive `DomainLogicAgent.process()` directly with a synthetic CDS result
+  // so we can assert — without any DB or orchestrator setup — that a
+  // dosing proposal conflicting with an urgent CDS alert is DISCARDED,
+  // reported as a LEVEL_1 safety event, and never reaches the Tier 3
+  // physician approval gate.
+  //
+  // Any change to the guardrail code MUST keep these tests GREEN. If a
+  // future refactor legitimately changes the shape, the tests must be
+  // updated IN THE SAME COMMIT so the invariant is never unenforced.
+  // ==========================================
+
+  await test('Guardrail: HRT-GUARDRAIL-CDS-001 scenario is present and well-formed in functional-med-scenarios.json', () => {
+    const scenariosPath = path.join(__dirname, 'scenarios', 'functional-med-scenarios.json');
+    assert(fs.existsSync(scenariosPath), 'functional-med-scenarios.json must exist');
+    const scenarios = JSON.parse(fs.readFileSync(scenariosPath, 'utf-8'));
+    const guardrailScenario = scenarios.scenarios.find((s) => s.id === 'HRT-GUARDRAIL-CDS-001');
+    assert(guardrailScenario, 'HRT-GUARDRAIL-CDS-001 must exist in functional-med-scenarios.json');
+    assertEqual(guardrailScenario.expected_domain_logic.guardrail_must_block, true);
+    assertEqual(guardrailScenario.expected_domain_logic.no_approval_request_fired, true);
+    assert(
+      guardrailScenario.expected_domain_logic.blocked_medications_contain.includes('testosterone'),
+      'guardrail scenario must assert testosterone is blocked'
+    );
+  });
+
+  await test('Guardrail: DomainLogicAgent has dependsOn: ["cds"] — orchestrator enforces CDS-first ordering', () => {
+    const { DomainLogicAgent } = require('../server/agents/domain-logic-agent');
+    const agent = new DomainLogicAgent();
+    assert(Array.isArray(agent.dependsOn), 'dependsOn must be an array');
+    assert(agent.dependsOn.includes('cds'), 'DomainLogicAgent MUST depend on cds — this enforces CDS-first ordering');
+    assertEqual(agent.autonomyTier, 3, 'DomainLogicAgent must be Tier 3 (physician-in-loop)');
+  });
+
+  await test('Guardrail: DomainLogicAgent._extractCDSGuardrails detects urgent testosterone contraindication', () => {
+    const { DomainLogicAgent } = require('../server/agents/domain-logic-agent');
+    const agent = new DomainLogicAgent();
+    const cdsResult = {
+      suggestions: [
+        {
+          rule_id: 'cds_testosterone_prostate_contraind',
+          category: 'urgent',
+          suggestion_type: 'contraindication_alert',
+          title: 'Testosterone contraindicated — active prostate cancer',
+          description: 'Patient has active prostate cancer on surveillance with rising PSA. Testosterone replacement is contraindicated per AUA guidelines.',
+        }
+      ]
+    };
+    const guardrails = agent._extractCDSGuardrails(cdsResult);
+    assert(guardrails.blockedMedications.has('testosterone'), 'testosterone token must be scraped from urgent alert title/description');
+    assertEqual(guardrails.urgentAlerts.length, 1, 'exactly one urgent alert expected');
+  });
+
+  await test('Guardrail: _conflictWithGuardrails flags a testosterone proposal against a testosterone block', () => {
+    const { DomainLogicAgent } = require('../server/agents/domain-logic-agent');
+    const agent = new DomainLogicAgent();
+    const guardrails = {
+      blockedMedications: new Set(['testosterone']),
+      urgentAlerts: [{ title: 'Testosterone contraindicated', category: 'urgent' }]
+    };
+    const proposal = {
+      rule_id: 'hrt-tt-init-low-male',
+      action: { payload: { medication: 'Testosterone Cypionate', proposedDose: '100 mg', route: 'IM', frequency: 'weekly' } }
+    };
+    const conflict = agent._conflictWithGuardrails(proposal, guardrails);
+    assert(conflict, 'conflict must be detected — proposal medication contains "testosterone"');
+    assertEqual(conflict.title, 'Testosterone contraindicated');
+  });
+
+  await test('Guardrail: _conflictWithGuardrails passes a non-conflicting proposal (metformin vs testosterone block)', () => {
+    const { DomainLogicAgent } = require('../server/agents/domain-logic-agent');
+    const agent = new DomainLogicAgent();
+    const guardrails = {
+      blockedMedications: new Set(['testosterone']),
+      urgentAlerts: [{ title: 'Testosterone contraindicated', category: 'urgent' }]
+    };
+    const proposal = {
+      rule_id: 'unrelated-metformin-rule',
+      action: { payload: { medication: 'Metformin', proposedDose: '500 mg', route: 'PO', frequency: 'BID' } }
+    };
+    const conflict = agent._conflictWithGuardrails(proposal, guardrails);
+    assertEqual(conflict, null, 'non-conflicting proposal must pass through');
+  });
+
+  await test('Guardrail: DomainLogicAgent.process() blocks testosterone init when CDS urgent alert is present (HRT-GUARDRAIL-CDS-001)', async () => {
+    // Load the canonical scenario from disk — this is the single source of
+    // truth for the guardrail contract.
+    const scenariosPath = path.join(__dirname, 'scenarios', 'functional-med-scenarios.json');
+    const scenarios = JSON.parse(fs.readFileSync(scenariosPath, 'utf-8'));
+    const scenario = scenarios.scenarios.find((s) => s.id === 'HRT-GUARDRAIL-CDS-001');
+    assert(scenario, 'HRT-GUARDRAIL-CDS-001 must exist');
+
+    const { DomainLogicAgent } = require('../server/agents/domain-logic-agent');
+    const engine = require('../server/domain/functional-med-engine');
+    const agent = new DomainLogicAgent();
+
+    // Build the patient context the way the orchestrator would. The scenario
+    // labs include total testosterone 245 ng/dL (low), which WOULD trigger
+    // `hrt-tt-init-male` (Consider Testosterone Initiation — Symptomatic Male)
+    // in hrt-rules.js — except that CDS has already flagged an urgent
+    // contraindication upstream.
+    //
+    // IMPORTANT: the symptom keywords the rule requires (`fatigue`, `low libido`)
+    // live in `encounter.chief_complaint`, NOT in `scenario.transcript`. The
+    // domain-logic engine only reads `encounter.transcript` when evaluating
+    // `symptoms_any`, so we concatenate the chief complaint into the transcript
+    // so the engine fires. Without this, the engine produces ZERO testosterone
+    // proposals for this context and the guardrail invariant ("no testosterone
+    // in allowed") passes trivially because there was never anything to block.
+    // A regression that silently removes the guardrail filter would not be
+    // caught without a concrete proposal to block.
+    const context = {
+      patient: { ...scenario.patient, id: 90001 },
+      encounter: {
+        id: 90001,
+        chief_complaint: scenario.encounter.chief_complaint,
+        transcript: `${scenario.encounter.chief_complaint}. ${scenario.transcript}`
+      },
+      vitals: scenario.vitals || {},
+      problems: scenario.problems || [],
+      medications: scenario.medications || [],
+      allergies: scenario.allergies || [],
+      labs: scenario.labs || []
+    };
+
+    // PRE-CHECK: prove the raw engine DOES fire a testosterone dosing proposal
+    // for this context. If this assertion fails, everything downstream is
+    // vacuous — the guardrail has nothing to discard. This keeps the regression
+    // test honest: removing `_conflictWithGuardrails` MUST make the test fail
+    // because the proposal will leak to `allowedDosingProposals`.
+    const engineResult = engine.evaluate(context);
+    const rawTestosteroneProposal = (engineResult.dosingProposals || []).find((p) => {
+      const med = (p.action?.payload?.medication || '').toLowerCase();
+      return med.includes('testosterone');
+    });
+    assert(
+      rawTestosteroneProposal,
+      'PRE-CHECK FAILED: engine.evaluate() must produce a testosterone dosing proposal ' +
+      'for this context. Without it, the guardrail assertions below pass vacuously. ' +
+      'Fix: ensure the scenario chief_complaint/transcript contains symptoms the ' +
+      '`hrt-tt-init-male` rule matches (fatigue, low libido, erectile dysfunction, ' +
+      'depressed mood, decreased muscle mass).'
+    );
+
+    // Hand-build the CDS result that the orchestrator would inject. This is
+    // what the CDS engine SHOULD emit for a patient with active prostate
+    // cancer + rising PSA who is being asked about testosterone. Any change
+    // to this shape means the guardrail contract has drifted and needs a
+    // plan-level review.
+    const cdsResult = {
+      suggestions: [
+        {
+          rule_id: 'cds_testosterone_prostate_contraind',
+          rule_type: 'contraindication',
+          category: 'urgent',
+          suggestion_type: 'contraindication_alert',
+          priority: 1,
+          title: 'Testosterone contraindicated — active prostate cancer',
+          description: 'Patient has active prostate cancer on surveillance with rising PSA (5.2). Testosterone replacement is contraindicated per AUA guidelines on testosterone therapy in men with prostate cancer.',
+          evidence_source: 'AUA Guideline on Testosterone Therapy 2018 §7.1'
+        }
+      ]
+    };
+
+    const result = await agent.process(context, { cds: cdsResult });
+
+    // Invariant 1: the agent saw the alert and used it as a guardrail source
+    assertEqual(result.guardrailSource, 'cds_engine', 'guardrail source must be CDS engine, not cds_unavailable');
+    assert(result.guardrailAlertCount >= 1, 'at least one urgent CDS alert must be counted');
+
+    // Invariant 2: NO testosterone dosing proposal passed through to `allowedDosingProposals`.
+    // Because the pre-check proved one was generated, this assertion is non-trivial:
+    // a broken guardrail filter would leak the proposal here and fail the test.
+    const testosteroneInAllowed = (result.dosingProposals || []).some((p) => {
+      const med = (p.action?.payload?.medication || '').toLowerCase();
+      return med.includes('testosterone');
+    });
+    assertEqual(testosteroneInAllowed, false, 'NO testosterone dosing proposal may pass through allowedDosingProposals');
+
+    // Invariant 3: the discarded proposal is in `blockedBySafety` with the CDS
+    // alert cited. Because the pre-check proved the engine generated a
+    // testosterone proposal, we now KNOW this array must be non-empty — a
+    // broken filter would leak it to `allowedDosingProposals` and fail
+    // Invariant 2; a filter that silently dropped it without logging would
+    // fail here.
+    assert(
+      Array.isArray(result.blockedBySafety) && result.blockedBySafety.length >= 1,
+      'blockedBySafety must contain at least one entry — the engine produced a ' +
+      'testosterone proposal (pre-check passed) and the guardrail must have filed it here'
+    );
+    const blockedTestosterone = result.blockedBySafety.find((b) => {
+      const med = (b.proposal?.action?.payload?.medication || '').toLowerCase();
+      return med.includes('testosterone');
+    });
+    assert(blockedTestosterone, 'testosterone proposal must be present in blockedBySafety');
+    assert(
+      blockedTestosterone.blockedBy?.title?.toLowerCase().includes('prostate') ||
+      blockedTestosterone.blockedBy?.title?.toLowerCase().includes('testosterone'),
+      'blockedBy.title must cite the CDS alert (prostate/testosterone) for traceable physician audit'
+    );
+
+    // Invariant 4: a LEVEL_1 safety event was logged with the guardrail reason.
+    // This is the signal that the escalation reached `base-agent.reportSafetyEvent`
+    // as a NUMERIC level 1, not silently downgraded to LEVEL_4 — the exact bug
+    // that this test suite caught in domain-logic-agent.js:192/262.
+    const level1 = agent.safetyEvents.filter((e) => e.level === 1);
+    assert(level1.length >= 1, 'LEVEL_1 safety event must be logged when a proposal is blocked');
+    const describesBlock = level1.some((e) => /guardrail|blocked/i.test(e.description));
+    assert(describesBlock, 'LEVEL_1 safety event description must mention guardrail or blocked');
+  });
+
+  await test('Guardrail: DomainLogicAgent.process() fails closed when CDS errors (returns zero proposals, logs LEVEL_2)', async () => {
+    const { DomainLogicAgent } = require('../server/agents/domain-logic-agent');
+    const agent = new DomainLogicAgent();
+
+    // Build a minimal context. We DON'T pass agentResults.cds, and we pass
+    // a context that will make the fallback cdsEngine.evaluatePatientContext
+    // throw — by giving it encounter/patient ids that don't exist in the
+    // test DB. This is the fail-closed branch.
+    const context = {
+      patient: { id: 99999999 },  // nonexistent
+      encounter: { id: 99999999, transcript: 'starting testosterone 200 mg IM weekly' },
+      vitals: {},
+      problems: [{ problem_name: 'Hypogonadism', icd10_code: 'E29.1' }],
+      medications: [],
+      allergies: [],
+      labs: [{ test_name: 'Total Testosterone', result_value: '245', units: 'ng/dL', abnormal_flag: 'L' }]
+    };
+
+    // Temporarily stub cdsEngine.evaluatePatientContext to throw
+    const cdsEngineModule = require('../server/cds-engine');
+    const originalFn = cdsEngineModule.evaluatePatientContext;
+    cdsEngineModule.evaluatePatientContext = async () => {
+      throw new Error('simulated CDS failure for fail-closed test');
+    };
+
+    try {
+      const result = await agent.process(context, {});
+      // Fail-closed invariant: zero proposals regardless of what the engine would have done
+      assertEqual(result.guardrailSource, 'cds_unavailable', 'guardrailSource must signal CDS unavailable');
+      assertEqual((result.dosingProposals || []).length, 0, 'zero dosing proposals when CDS unavailable');
+      assertEqual((result.suggestions || []).length, 0, 'zero suggestions when CDS unavailable');
+      // LEVEL_2 safety event logged
+      const level2 = agent.safetyEvents.filter((e) => e.level === 2);
+      assert(level2.length >= 1, 'LEVEL_2 safety event must be logged when CDS fails');
+      const describesCdsFail = level2.some((e) => /CDS.*fail/i.test(e.description));
+      assert(describesCdsFail, 'LEVEL_2 safety event description must mention CDS failure');
+    } finally {
+      cdsEngineModule.evaluatePatientContext = originalFn;
+    }
+  });
+
+  // ==========================================
   // RESULTS
   // ==========================================
 

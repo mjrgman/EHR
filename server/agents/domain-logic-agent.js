@@ -19,7 +19,7 @@
  * Tier: 3 (physician-in-the-loop — nothing executes without approval).
  */
 
-const { BaseAgent, AUTONOMY_TIER, SAFETY_LEVEL, ACTION_TYPE } = require('./base-agent');
+const { BaseAgent, AUTONOMY_TIER, ACTION_TYPE } = require('./base-agent');
 const engine = require('../domain/functional-med-engine');
 const cdsEngine = require('../cds-engine');
 const knowledgeBase = require('../domain/knowledge-base');
@@ -184,8 +184,13 @@ class DomainLogicAgent extends BaseAgent {
       } catch (err) {
         // If CDS fails, we FAIL CLOSED. No specialty recommendations
         // without confirmation that standard-of-care checks ran cleanly.
+        // IMPORTANT: reportSafetyEvent expects a NUMERIC level (1/2/3/4),
+        // not the SAFETY_LEVEL object. Passing the object silently falls
+        // back to LEVEL_4 (Informational) inside base-agent.js:267 and
+        // loses the escalation signal — regression guarded by the Guardrail
+        // fail-closed test in test/run-tests.js.
         this.reportSafetyEvent(
-          SAFETY_LEVEL.LEVEL_2,
+          2,
           `CDS engine failed — suppressing all domain-logic recommendations. Error: ${err.message}`,
           context
         );
@@ -249,8 +254,12 @@ class DomainLogicAgent extends BaseAgent {
             rationale: conflict.rationale || conflict.description
           }
         });
+        // IMPORTANT: numeric level (not SAFETY_LEVEL object) — see
+        // domain-logic-agent.js:187 for the same fix and base-agent.js:266
+        // for the contract. Misclassifying this as LEVEL_4 would cause a
+        // blocked-dosing event to be silently downgraded from Critical.
         this.reportSafetyEvent(
-          SAFETY_LEVEL.LEVEL_1,
+          1,
           `Domain logic dosing proposal blocked by standard-of-care guardrail: ` +
           `${proposal.action?.payload?.medication} ` +
           `(CDS alert: "${conflict.title}")`,
