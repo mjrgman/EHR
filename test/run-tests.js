@@ -4368,6 +4368,13 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
     null,
     '1234567890'
   );
+  await authModule.createUser(
+    'test.frontdesk',
+    'SecurePass!234',
+    'Test Front Desk',
+    'front_desk',
+    'frontdesk@example.com'
+  );
   const sarahPatient = await db.getPatientById(sarahId);
 
   async function httpRequest(routePath, options = {}) {
@@ -4410,6 +4417,17 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
     const setCookie = response.headers.get('set-cookie');
     return setCookie ? setCookie.split(';')[0] : '';
   }
+
+  await test('Auth HTTP: GET /api/health remains public', async () => {
+    const res = await httpRequest('/api/health');
+    assertEqual(res.status, 200, 'health endpoint must stay public');
+    assertEqual(res.body.status, 'ok');
+  });
+
+  await test('Auth HTTP: protected API rejects unauthenticated requests in development mode', async () => {
+    const res = await httpRequest('/api/patients');
+    assertEqual(res.status, 401, 'protected API must not fall back to a default dev clinician');
+  });
 
   await test('Auth HTTP: POST /api/auth/login returns access and refresh tokens', async () => {
     const res = await httpRequest('/api/auth/login', {
@@ -4486,6 +4504,82 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
       body: { refreshToken: login.body.refreshToken }
     });
     assertEqual(refreshAfterRevoke.status, 401, 'logout-all should revoke outstanding refresh sessions');
+  });
+
+  await test('Access boundary: front desk patient detail omits bundled clinical subresources', async () => {
+    const login = await httpRequest('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'test.frontdesk', password: 'SecurePass!234' }
+    });
+    assertEqual(login.status, 200);
+
+    const res = await httpRequest(`/api/patients/${sarahId}`, { token: login.body.token });
+    assertEqual(res.status, 200);
+    assertEqual(res.body.first_name, sarahPatient.first_name);
+    assertEqual(res.body.last_name, sarahPatient.last_name);
+    assert(res.body.problems === undefined, 'front desk must not receive problem list');
+    assert(res.body.medications === undefined, 'front desk must not receive medications');
+    assert(res.body.allergies === undefined, 'front desk must not receive allergies');
+    assert(res.body.labs === undefined, 'front desk must not receive labs');
+    assert(res.body.vitals === undefined, 'front desk must not receive vitals');
+    assert(res.body.vitals_history === undefined, 'front desk must not receive vitals history');
+  });
+
+  await test('Access boundary: front desk cannot fetch medication subresource directly', async () => {
+    const login = await httpRequest('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'test.frontdesk', password: 'SecurePass!234' }
+    });
+    assertEqual(login.status, 200);
+
+    const res = await httpRequest(`/api/patients/${sarahId}/medications`, { token: login.body.token });
+    assertEqual(res.status, 403, 'front desk must not access medication subresource');
+  });
+
+  await test('Access boundary: front desk encounter detail omits transcript and SOAP note', async () => {
+    const login = await httpRequest('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'test.frontdesk', password: 'SecurePass!234' }
+    });
+    assertEqual(login.status, 200);
+
+    const res = await httpRequest(`/api/encounters/${encounterId}`, { token: login.body.token });
+    assertEqual(res.status, 200);
+    assert(res.body.transcript === undefined, 'front desk must not receive transcript');
+    assert(res.body.soap_note === undefined, 'front desk must not receive SOAP note');
+  });
+
+  await test('Access boundary: front desk cannot access encounter orders summary', async () => {
+    const login = await httpRequest('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'test.frontdesk', password: 'SecurePass!234' }
+    });
+    assertEqual(login.status, 200);
+
+    const res = await httpRequest(`/api/encounters/${encounterId}/orders`, { token: login.body.token });
+    assertEqual(res.status, 403, 'front desk must not access encounter orders');
+  });
+
+  await test('Access boundary: front desk cannot access billing preview endpoints', async () => {
+    const login = await httpRequest('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'test.frontdesk', password: 'SecurePass!234' }
+    });
+    assertEqual(login.status, 200);
+
+    const res = await httpRequest(`/api/encounters/${encounterId}/charge`, { token: login.body.token });
+    assertEqual(res.status, 403, 'front desk must not access charge preview');
+  });
+
+  await test('Access boundary: physician can still access billing preview endpoints', async () => {
+    const login = await httpRequest('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'test.clinician', password: 'SecurePass!234' }
+    });
+    assertEqual(login.status, 200);
+
+    const res = await httpRequest(`/api/encounters/${encounterId}/charge`, { token: login.body.token });
+    assertEqual(res.status, 200, 'physician should retain checkout preview access');
   });
 
   await test('Patient Portal HTTP: GET /api/patient-portal/session requires a verified portal session', async () => {

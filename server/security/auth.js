@@ -253,14 +253,14 @@ async function me(req, res) {
  *   1. Authorization: Bearer <token>
  *   2. x-auth-token header
  *
- * In development mode (NODE_ENV !== 'production'), falls back to
- * a default physician identity for convenience. In production,
- * unauthenticated requests are rejected with 401.
+ * In development mode, header-based auth bypass is available only when
+ * ENABLE_DEV_AUTH_BYPASS=true is set explicitly. Unauthenticated requests are
+ * otherwise rejected with 401 in every environment.
  */
 function requireAuth(req, res, next) {
   // Public routes that skip auth
-  const publicPaths = ['/api/auth/login', '/api/health'];
-  if (publicPaths.some(p => req.path === p)) {
+  const publicPaths = new Set(['/api/auth/login', '/auth/login', '/api/health', '/health']);
+  if (publicPaths.has(req.path)) {
     return next();
   }
 
@@ -288,16 +288,24 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 
-  // No token — check dev mode (S-C4: only activate when NODE_ENV is explicitly 'development')
-  const isDev = process.env.NODE_ENV === 'development';
-  if (isDev) {
-    // In dev, allow header-based identity for backward compatibility with tests,
-    // but default to physician if nothing is provided
+  // No token — development bypass is explicit opt-in and still requires headers.
+  const isDevHeaderBypassEnabled =
+    process.env.NODE_ENV === 'development' &&
+    process.env.ENABLE_DEV_AUTH_BYPASS === 'true';
+
+  if (isDevHeaderBypassEnabled) {
+    const headerUser = req.headers['x-user-id'];
+    const headerRole = req.headers['x-user-role'];
+
+    if (!headerUser || !headerRole) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
     req.user = {
       sub: 0,
-      username: req.headers['x-user-id'] || 'dev-physician',
-      role: req.headers['x-user-role'] || 'physician',
-      fullName: 'Dev Physician',
+      username: headerUser,
+      role: headerRole,
+      fullName: req.headers['x-user-name'] || String(headerUser),
     };
     req.session = req.session || {};
     req.session.userId = req.user.username;
