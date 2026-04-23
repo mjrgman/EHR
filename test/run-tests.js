@@ -4723,6 +4723,57 @@ Doctor: Given your kidney function declining, let's start Ozempic 0.25 mg weekly
   });
 
   // ==========================================
+  // PHASE: NODE:TEST UNIT SUITE
+  // ==========================================
+  // The unit suite under test/unit/ runs in isolation via Node's built-in
+  // test runner. We spawn it as a child process and surface pass/fail as a
+  // single test in the integration counters so CI's `npm test` covers both.
+
+  console.log('\nPHASE: UNIT TESTS (node:test)\n');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+  await test('Unit suite: node --test test/unit/*.test.js exits cleanly', async () => {
+    const { spawnSync } = require('child_process');
+    // Discover unit test files at runtime so adding a new test/unit/*.test.js
+    // file is automatically picked up. Node 22's --test treats a directory
+    // path as a module specifier, so we pass each file explicitly.
+    const unitDir = path.resolve(__dirname, 'unit');
+    const unitFiles = fs.readdirSync(unitDir)
+      .filter((f) => f.endsWith('.test.js'))
+      .map((f) => path.join('test', 'unit', f));
+
+    if (unitFiles.length === 0) {
+      throw new Error('No test/unit/*.test.js files found — refusing to silently pass');
+    }
+
+    const result = spawnSync(
+      process.execPath,
+      ['--test', ...unitFiles],
+      {
+        cwd: path.resolve(__dirname, '..'),
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          // Reuse the same test-suite secrets so PHI encryption tests have a key.
+          // Each unit test that writes to SQLite uses :memory:, so the integration
+          // test database (set above) is not touched.
+          PHI_ENCRYPTION_KEY: process.env.PHI_ENCRYPTION_KEY,
+        },
+      }
+    );
+
+    if (result.status !== 0) {
+      const tail = (result.stdout || '').split('\n').slice(-40).join('\n');
+      const stderrTail = (result.stderr || '').split('\n').slice(-20).join('\n');
+      throw new Error(
+        `node --test exited with code ${result.status}.\n` +
+        `--- stdout (last 40 lines) ---\n${tail}\n` +
+        `--- stderr (last 20 lines) ---\n${stderrTail}`
+      );
+    }
+  });
+
+  // ==========================================
   // RESULTS
   // ==========================================
 
