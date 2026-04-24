@@ -248,64 +248,91 @@ async function me(req, res) {
 // MIDDLEWARE
 // ==========================================
 
+function extractToken(req) {
+  const authHeader = req.headers['authorization'];
+  return authHeader?.startsWith('Bearer ')
+    ? authHeader.slice(7)
+    : req.headers['x-auth-token'];
+}
+
+function attachAuthenticatedUser(req, decoded) {
+  req.user = decoded;
+  req.session = req.session || {};
+  req.session.userId = decoded.username || decoded.sub || 'unknown';
+  req.session.userRole = decoded.role || 'guest';
+}
+
+function authenticateRequest(req) {
+  const token = extractToken(req);
+  if (!token) {
+    return { authenticated: false, tokenPresent: false, error: null };
+  }
+
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    return {
+      authenticated: false,
+      tokenPresent: true,
+      error: 'Invalid or expired token',
+    };
+  }
+
+  if (decoded.jti && tokenBlacklist.has(decoded.jti)) {
+    return {
+      authenticated: false,
+      tokenPresent: true,
+      error: 'Token has been revoked',
+    };
+  }
+
+  attachAuthenticatedUser(req, decoded);
+  return { authenticated: true, tokenPresent: true, user: decoded };
+}
+
 /**
  * Authentication middleware — validates JWT from:
  *   1. Authorization: Bearer <token>
  *   2. x-auth-token header
  *
- * In development mode (NODE_ENV !== 'production'), falls back to
- * a default physician identity for convenience. In production,
- * unauthenticated requests are rejected with 401.
+ * In development mode, header-based auth bypass is available only when
+ * ENABLE_DEV_AUTH_BYPASS=true is set explicitly. Unauthenticated requests are
+ * otherwise rejected with 401 in every environment.
  */
 function requireAuth(req, res, next) {
-  // Public routes that skip auth
   const publicPaths = ['/api/auth/login', '/api/health'];
   if (publicPaths.some(p => req.path === p)) {
     return next();
   }
 
-  // Extract token
-  const authHeader = req.headers['authorization'];
-  const token = authHeader?.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : req.headers['x-auth-token'];
-
-  if (token) {
-    const decoded = verifyToken(token);
-    if (decoded) {
-      // S-H1: Check if token has been revoked (blacklisted)
-      if (decoded.jti && tokenBlacklist.has(decoded.jti)) {
-        return res.status(401).json({ error: 'Token has been revoked' });
-      }
-      // Attach user info to request (replaces the old x-user-id/x-user-role headers)
-      req.user = decoded;
-      req.session = req.session || {};
-      req.session.userId = decoded.username;
-      req.session.userRole = decoded.role;
-      return next();
-    }
-    // Token present but invalid
-    return res.status(401).json({ error: 'Invalid or expired token' });
+  const authResult = authenticateRequest(req);
+  if (authResult.authenticated) {
+    return next();
+  }
+  if (authResult.tokenPresent) {
+    return res.status(401).json({ error: authResult.error });
   }
 
-  // No token — check dev mode (S-C4: only activate when NODE_ENV is explicitly 'development')
-  const isDev = process.env.NODE_ENV === 'development';
-  if (isDev) {
-    // In dev, allow header-based identity for backward compatibility with tests,
-    // but default to physician if nothing is provided
-    req.user = {
+  const isDevHeaderBypassEnabled =
+    process.env.NODE_ENV === 'development' &&
+    process.env.ENABLE_DEV_AUTH_BYPASS === 'true';
+
+  if (isDevHeaderBypassEnabled) {
+    const headerUser = req.headers['x-user-id'];
+    const headerRole = req.headers['x-user-role'];
+
+    if (!headerUser || !headerRole) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    attachAuthenticatedUser(req, {
       sub: 0,
-      username: req.headers['x-user-id'] || 'dev-physician',
-      role: req.headers['x-user-role'] || 'physician',
-      fullName: 'Dev Physician',
-    };
-    req.session = req.session || {};
-    req.session.userId = req.user.username;
-    req.session.userRole = req.user.role;
+      username: headerUser,
+      role: headerRole,
+      fullName: req.headers['x-user-name'] || String(headerUser),
+    });
     return next();
   }
 
-  // Production — reject
   return res.status(401).json({ error: 'Authentication required' });
 }
 
@@ -417,6 +444,7 @@ module.exports = {
   changePassword,
   signToken,
   verifyToken,
+  authenticateRequest,
   // S-C3: JWT_SECRET is NOT exported — use signToken/verifyToken wrappers instead.
   // Note: server/fhir/smart/token.js references auth.JWT_SECRET and will need updating.
 };

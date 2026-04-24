@@ -570,19 +570,20 @@ function getPhiScopeFields(roleName) {
 // EXPRESS MIDDLEWARE
 // ==========================================
 
+function getRequestIdentity(req) {
+  return {
+    userRole: req.session?.userRole || req.user?.role || 'guest',
+    userId: String(req.session?.userId || req.user?.username || req.user?.sub || 'anonymous'),
+  };
+}
+
 /**
  * Middleware: require one or more roles
  * Usage: app.get('/api/patients', rbac.requireRole('physician', 'nurse_practitioner'), handler)
  */
 function requireRole(...allowedRoles) {
   return (req, res, next) => {
-    // In development mode, default to physician role for testing
-    // In production, this MUST come from authenticated session/JWT
-    const isDev = process.env.NODE_ENV !== 'production';
-    const defaultRole = isDev ? 'physician' : 'guest';
-
-    const userRole = req.session?.userRole || req.headers['x-user-role'] || defaultRole;
-    const userId = req.session?.userId || req.headers['x-user-id'] || 'anonymous';
+    const { userRole, userId } = getRequestIdentity(req);
 
     // Attach role to request for downstream middleware
     req.userRole = userRole;
@@ -607,8 +608,7 @@ function requireRole(...allowedRoles) {
  */
 function requirePermission(action, resourceType) {
   return (req, res, next) => {
-    const userRole = req.session?.userRole || req.headers['x-user-role'] || 'guest';
-    const userId = req.session?.userId || req.headers['x-user-id'] || 'anonymous';
+    const { userRole, userId } = getRequestIdentity(req);
     
     if (!authorize(userRole, resourceType, action)) {
       console.warn(
@@ -633,7 +633,7 @@ function requirePermission(action, resourceType) {
  * Usage: app.get('/api/patients/:id', rbac.filterResponse, handler)
  */
 function filterResponse(req, res, next) {
-  const userRole = req.session?.userRole || req.headers['x-user-role'] || 'guest';
+  const { userRole } = getRequestIdentity(req);
   
   // Wrap res.json to filter response
   const originalJson = res.json.bind(res);
@@ -652,8 +652,7 @@ function filterResponse(req, res, next) {
  */
 function requireResourceAccess(resourceType) {
   return (req, res, next) => {
-    const userRole = req.session?.userRole || req.headers['x-user-role'] || 'guest';
-    const userId = req.session?.userId || req.headers['x-user-id'] || 'anonymous';
+    const { userRole, userId } = getRequestIdentity(req);
     
     // Determine action from HTTP method
     const action = {
