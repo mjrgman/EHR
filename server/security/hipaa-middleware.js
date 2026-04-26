@@ -449,8 +449,8 @@ function sessionTracker(req, res, next) {
   const sessionId = req.headers['x-session-id'] || req.cookies?.sessionId;
 
   // Extract user info from JWT (set by auth.requireAuth middleware) or fallback
-  const userId = req.user?.username || req.headers['x-user-id'] || 'anonymous';
-  const userRole = req.user?.role || req.headers['x-user-role'] || 'guest';
+  const userId = req.user?.username || req.session?.userId || 'anonymous';
+  const userRole = req.user?.role || req.session?.userRole || 'guest';
   
   const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
   const userAgent = req.get('user-agent') || 'unknown';
@@ -538,8 +538,8 @@ function securityHeaders(req, res, next) {
  * Rate limiting middleware
  */
 function rateLimiter(req, res, next) {
-  const userId = req.session?.userId || req.headers['x-user-id'] || 'anonymous';
-  const userRole = req.session?.userRole || req.headers['x-user-role'] || 'guest';
+  const userId = req.session?.userId || req.user?.username || 'anonymous';
+  const userRole = req.session?.userRole || req.user?.role || 'guest';
   
   const rateCheck = checkRateLimit(userId, userRole);
   
