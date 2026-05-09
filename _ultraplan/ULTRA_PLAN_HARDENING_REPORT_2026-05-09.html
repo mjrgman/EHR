@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>EHR Ultra Plan — Hardening Report (2026-05-09)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel-2: #1e2330;
+    --line: #2a3142;
+    --text: #e7ecf3;
+    --muted: #8a93a6;
+    --accent: #5fa8ff;
+    --pass: #4cc38a;
+    --warn: #f0b429;
+    --fail: #ef5e6e;
+    --info: #8b6cef;
+    --code-bg: #0b0d12;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--text); margin: 0; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.55; }
+  .page { max-width: 1100px; margin: 0 auto; padding: 32px 24px 96px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 24px; margin-bottom: 32px; }
+  header .banner {
+    background: var(--panel-2); color: var(--muted);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; display: inline-block; margin-bottom: 16px;
+  }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 20px; margin: 32px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: var(--accent); }
+  p, li { color: var(--text); }
+  .muted { color: var(--muted); }
+  .grid { display: grid; gap: 16px; }
+  .grid.two { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 720px) { .grid.two { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; }
+  .stat { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 16px; }
+  .stat .item { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; min-width: 140px; }
+  .stat .num { font-size: 28px; font-weight: 600; margin: 0; }
+  .stat .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .num.pass { color: var(--pass); }
+  .num.warn { color: var(--warn); }
+  .num.fail { color: var(--fail); }
+  .num.info { color: var(--info); }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+  pre { background: var(--code-bg); padding: 12px 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.4; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .pill.pass { background: rgba(76, 195, 138, 0.18); color: var(--pass); border: 1px solid rgba(76, 195, 138, 0.4); }
+  .pill.warn { background: rgba(240, 180, 41, 0.18); color: var(--warn); border: 1px solid rgba(240, 180, 41, 0.4); }
+  .pill.fail { background: rgba(239, 94, 110, 0.18); color: var(--fail); border: 1px solid rgba(239, 94, 110, 0.4); }
+  .pill.info { background: rgba(139, 108, 239, 0.18); color: var(--info); border: 1px solid rgba(139, 108, 239, 0.4); }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .toc { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; }
+  .toc ol { margin: 0; padding-left: 20px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  ul.compact { margin: 6px 0 0 0; padding-left: 18px; }
+  ul.compact li { margin: 2px 0; }
+  .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); margin-right: 4px; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <span class="banner">Synthetic EHR Demo &middot; No PHI &middot; Not for clinical use</span>
+  <h1>EHR Ultra Plan &mdash; Hardening Report</h1>
+  <p class="muted">Worktree <code>claude/lucid-mclaren-57925a</code> &middot; 2026-05-09 &middot; Pre-6 PM Codex HTTP-test handoff</p>
+
+  <div class="stat">
+    <div class="item"><p class="num pass">66</p><div class="label">verifier PASS</div></div>
+    <div class="item"><p class="num warn">0</p><div class="label">verifier WARN</div></div>
+    <div class="item"><p class="num fail">0</p><div class="label">verifier FAIL</div></div>
+    <div class="item"><p class="num pass">85/85</p><div class="label">unit tests pass</div></div>
+    <div class="item"><p class="num info">0</p><div class="label">lint errors</div></div>
+    <div class="item"><p class="num info">3</p><div class="label">real holes plugged</div></div>
+  </div>
+</header>
+
+<section class="toc">
+  <h3 style="margin-top:0">Contents</h3>
+  <ol>
+    <li><a href="#mission">Mission &amp; constraints</a></li>
+    <li><a href="#holes">Holes found in the plan vs. reality</a></li>
+    <li><a href="#fixes">Fixes implemented this session</a></li>
+    <li><a href="#verifier">The verifier &mdash; what it checks &amp; why it exists</a></li>
+    <li><a href="#tests">Test coverage delta</a></li>
+    <li><a href="#weak">Weaknesses still open (not blocking 6 PM)</a></li>
+    <li><a href="#codex">Codex coordination &mdash; do-not-collide note</a></li>
+    <li><a href="#design">Claude Design redesign prompt</a></li>
+    <li><a href="#run">How to re-run &amp; verify</a></li>
+    <li><a href="#changelog">File-by-file changelog</a></li>
+  </ol>
+</section>
+
+<h2 id="mission">1. Mission &amp; constraints</h2>
+<div class="card">
+  <p>The user's directive: before Codex hardens the HTTP test layer at 6 PM, take the
+  three Ultra-plan layers (the 03-28 audit, the 04-07 review with its 77 findings, and the
+  05-03 Opus harden-verify plan) and find any holes that haven't actually been closed in the
+  code. Implement the fixes end-to-end without pausing, run lint and tests, write a single
+  HTML deliverable, and commit to GitHub.</p>
+  <ul class="compact">
+    <li><span class="badge">Worktree</span> Branch <code>claude/lucid-mclaren-57925a</code> tracks <code>origin/main</code>; in sync at session start.</li>
+    <li><span class="badge">Boundary</span> No PHI, no <code>_eval/</code> writes, no <code>.env</code> reads, no live LabCorp / billing / clinical endpoints.</li>
+    <li><span class="badge">Don't collide</span> Codex owns the HTTP test layer at 6 PM &mdash; this session does not edit <code>scripts/http-hardening-smoke.js</code> or <code>test/run-tests.js</code>.</li>
+    <li><span class="badge">Module count</span> Locked to the registry's <code>MODULE_ORDER.length</code> (13 in this branch; will become 14 once the AWV merge lands from main).</li>
+  </ul>
+</div>
+
+<h2 id="holes">2. Holes found in the plan vs. reality</h2>
+<p>The 04-07 review's "Fix Implementation Log" claimed all 77 findings were addressed.
+Spot-checking against the actual code surfaced three real holes plus several documentation
+inconsistencies. The verifier (built this session) now catches each of these automatically.</p>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>Hole</th><th>Where</th><th>Severity</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td><b>S-C4 regression in <code>rbac.js</code></b> &mdash; <code>requireRole</code> defaulted to <code>'physician'</code> whenever <code>NODE_ENV !== 'production'</code>, and read <code>req.headers['x-user-role']</code> as an unconditional fallback. The 04-07 fix was applied to <code>auth.js</code> only.</td>
+      <td><code>server/security/rbac.js</code> lines 581&ndash;656</td>
+      <td><span class="pill fail">P0</span></td>
+      <td><span class="pill pass">Fixed</span></td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><b>Same regression in <code>hipaa-middleware.js</code></b> &mdash; <code>sessionTracker</code> and <code>rateLimiter</code> read <code>x-user-role</code> / <code>x-user-id</code> as fallbacks with no env gate.</td>
+      <td><code>server/security/hipaa-middleware.js</code> lines 452, 541</td>
+      <td><span class="pill fail">P0</span></td>
+      <td><span class="pill pass">Fixed</span></td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><b>The 05-03 Opus harden-verify plan&nbsp;script did not exist.</b> The plan called for <code>scripts/ehr_harden_verify_skill.py</code> with a strict CLI contract; the file was missing.</td>
+      <td><code>scripts/ehr_harden_verify_skill.py</code></td>
+      <td><span class="pill warn">P1</span></td>
+      <td><span class="pill pass">Built</span></td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><b>Module catalog under-documented the registry.</b> <code>MODULE_CATALOG.md</code> documented 10 modules; <code>MODULE_ORDER</code> already had 13 (PatientLink, Patient App, MediVault were missing from the catalog).</td>
+      <td><code>MODULE_CATALOG.md</code></td>
+      <td><span class="pill warn">P1</span></td>
+      <td><span class="pill pass">Updated to 13</span></td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><b>Stale "9-module" / "nine specialized" language</b> across <code>README.md</code>, <code>VISION.md</code>, <code>package.json</code>.</td>
+      <td>4 docs</td>
+      <td><span class="pill warn">P2</span></td>
+      <td><span class="pill pass">Updated</span></td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><b>No auth unit tests.</b> <code>test/unit/</code> had RBAC, PHI-encryption, and audit tests but no test pinning the JWT-non-export contract or the dev-bypass gate.</td>
+      <td><code>test/unit/auth-identity.test.js</code></td>
+      <td><span class="pill warn">P1</span></td>
+      <td><span class="pill pass">8 tests added</span></td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><b>UR-017: worktree drift.</b> Branch is at 13 modules; the EHR root has 14 with AWV uncommitted. This is a known-pending item for the AWV merge from main.</td>
+      <td>worktree state</td>
+      <td><span class="pill info">tracked</span></td>
+      <td><span class="pill warn">Open &mdash; needs AWV merge</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="fixes">3. Fixes implemented this session</h2>
+<div class="grid two">
+  <div class="card">
+    <h3>S-C4 hardening (RBAC + HIPAA middleware)</h3>
+    <p>Both files now use a single explicit identity-resolution helper with
+    documented precedence:</p>
+    <ol class="compact">
+      <li><code>req.user</code> &mdash; JWT identity set by <code>auth.requireAuth</code></li>
+      <li><code>req.session.userRole</code> &mdash; validated session</li>
+      <li>Header bypass &mdash; <b>only</b> when <code>NODE_ENV=development</code> AND <code>ENABLE_DEV_AUTH_BYPASS=true</code></li>
+      <li>Default: <code>guest</code> (rejected by <code>requireRole</code>)</li>
+    </ol>
+    <p>The unset-<code>NODE_ENV</code> "default to physician" path is gone. Header
+    forgery is impossible in production even if upstream middleware were ever
+    misordered.</p>
+  </div>
+
+  <div class="card">
+    <h3>Verifier script (<code>scripts/ehr_harden_verify_skill.py</code>)</h3>
+    <p>Read-only Python stdlib script implementing the 05-03 plan's CLI contract.
+    Twelve check groups (A&ndash;L) plus a secret-leakage scan. Self-derives the
+    canonical module count from <code>MODULE_ORDER</code> so the check stays valid as
+    the registry evolves.</p>
+    <pre>python scripts/ehr_harden_verify_skill.py \
+  --path "C:\Users\micha\files\Clinical\EHR" \
+  --proving-ground "C:\Users\micha\files\ProvingGround" \
+  --include-autobetter --strict</pre>
+    <p>Exit codes: <code>0</code> all-pass, <code>1</code> any FAIL (or any WARN under <code>--strict</code>), <code>2</code> usage error.</p>
+  </div>
+
+  <div class="card">
+    <h3>Module catalog &amp; doc reconciliation</h3>
+    <p><code>MODULE_CATALOG.md</code> now documents all 13 modules with per-module
+    safety boundaries and a clear "10 encounter + 3 governance" split.
+    <code>README.md</code>, <code>VISION.md</code>, and <code>package.json</code> all use the
+    same count. The verifier will flag any future drift in
+    <code>--strict</code> mode.</p>
+  </div>
+
+  <div class="card">
+    <h3>Auth unit tests (<code>test/unit/auth-identity.test.js</code>)</h3>
+    <p>Eight tests, all passing. They pin the contract:</p>
+    <ul class="compact">
+      <li><code>JWT_SECRET</code> is not in <code>module.exports</code></li>
+      <li><code>signToken</code> / <code>verifyToken</code> round-trip works</li>
+      <li>Production rejects header-only identity</li>
+      <li>Dev-bypass requires both env flags</li>
+      <li>JWT identity wins over session and headers</li>
+      <li>Unset <code>NODE_ENV</code> doesn't grant physician role (S-C4 guard)</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="verifier">4. The verifier &mdash; what it checks &amp; why it exists</h2>
+<p>The verifier is the load-bearing artifact from this session. Without it, every
+"is the EHR aligned with the plan?" question becomes a manual grep run. With it,
+the question is one CLI invocation. Twelve check groups:</p>
+
+<table>
+  <thead><tr><th>Group</th><th>Checks</th><th>Why it matters</th></tr></thead>
+  <tbody>
+    <tr><td>A. Path / repo identity</td><td>required files, package.json name + scripts</td><td>Catches accidental scaffolding loss</td></tr>
+    <tr><td>B. Local safety config</td><td>CLAUDE.md no-PHI rule, secrets cycle, .gitignore <code>_eval/</code></td><td>Re-locks the four-layer secret cycle</td></tr>
+    <tr><td>C. Proving Ground canon</td><td>CATC plan, identity markers</td><td>External narrative stays coherent</td></tr>
+    <tr><td>D. Module count reconciliation</td><td>registry-derived count vs. all docs</td><td>The repeated 9/10/11/13/14 drift gets caught</td></tr>
+    <tr><td>E. FHIR auth + SMART</td><td><code>/fhir/R4</code> auth wall, SMART discovery order, smartScopeCheck</td><td>SMART-on-FHIR contract</td></tr>
+    <tr><td>F. FHIR resource surface</td><td>Patient/Encounter/Condition/Observation/Allergy/Med/Appt/Practitioner</td><td>Capability statement matches router</td></tr>
+    <tr><td>G. Practitioner schema</td><td>mapper fields vs. migration columns</td><td>Schema drift catches</td></tr>
+    <tr><td>H. Auth header bypass gate</td><td>JWT_SECRET non-export, dev-bypass double gate, no unguarded fallbacks in rbac/hipaa</td><td>S-C3 / S-C4 lock</td></tr>
+    <tr><td>I. MediVault audit</td><td>mount order intent, self-auth check, vault_access_log writes, audit-logger PHI route</td><td>UR-001/002/003 alignment</td></tr>
+    <tr><td>J. Autobetter</td><td>prompt + report exist, banner text present</td><td>Synthetic-demo banner contract</td></tr>
+    <tr><td>K. Test coverage</td><td>auth/rbac/phi/audit unit tests present</td><td>Test gap from 04-07 review</td></tr>
+    <tr><td>L. Ultra-review regression sample</td><td>S-C1, S-C2, A-C2, A-C3 invariants</td><td>Spot-check that the 04-07 fixes are still wired</td></tr>
+    <tr><td>Z. Secret leakage scan</td><td>high-confidence secret patterns in tracked text</td><td>Defense-in-depth on top of the secret-scrubber hook</td></tr>
+  </tbody>
+</table>
+
+<h2 id="tests">5. Test coverage delta</h2>
+<div class="card">
+  <p><b>Before:</b> 17 unit-test files, 77 tests, no auth-specific test.</p>
+  <p><b>After:</b> 18 unit-test files, 85 tests, including 8 new auth-identity tests pinning the S-C4 contract.</p>
+  <pre>npm run test:unit
+# tests 85
+# pass  85
+# fail   0
+# duration_ms 1306</pre>
+  <p>Lint baseline: 0 errors, 125 pre-existing warnings (no regressions introduced).</p>
+</div>
+
+<h2 id="weak">6. Weaknesses still open (not blocking 6 PM)</h2>
+<table>
+  <thead><tr><th>Item</th><th>Where</th><th>Recommendation</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>UR-017 worktree drift &mdash; AWV module is on EHR root but not in this branch</td>
+      <td>EHR root <code>server/agents/awv-agent.js</code> is uncommitted</td>
+      <td>Merge AWV from EHR root into <code>main</code> in a separate PR; verifier will switch from 13 to 14 automatically.</td>
+    </tr>
+    <tr>
+      <td>125 ESLint warnings (pre-existing baseline)</td>
+      <td>Mostly <code>useEffect</code> exhaustive-deps and unused vars in <code>src/pages/*</code></td>
+      <td>Don't fix in bulk &mdash; pick them off as the affected files are touched. The 1b07b9a baseline commit was deliberate.</td>
+    </tr>
+    <tr>
+      <td>No HIPAA-middleware unit test</td>
+      <td><code>test/unit/</code></td>
+      <td>Mirror the auth-identity tests for <code>resolveIdentityForAudit</code> and <code>rateLimiter</code>. Out of scope for this session.</td>
+    </tr>
+    <tr>
+      <td>No frontend integration test for the "Tier 3 awaiting approval" gate</td>
+      <td><code>src/components/</code></td>
+      <td>Add a Playwright/Vitest test once the Claude Design redesign produces a stable component for the gate.</td>
+    </tr>
+    <tr>
+      <td>JWT blacklist is in-memory</td>
+      <td><code>server/security/auth.js:43</code></td>
+      <td>Production deployment should swap the in-memory <code>tokenBlacklist</code> Map for Redis. Tracked in S-H1; not a regression, just a deferred migration.</td>
+    </tr>
+    <tr>
+      <td>HIPAA middleware <code>resolveIdentityForAudit</code> precedence change is silent &mdash; no migration note</td>
+      <td><code>server/security/hipaa-middleware.js</code></td>
+      <td>If anywhere in the codebase still passes <code>x-user-id</code> in a non-bypass production path expecting it to land in audit logs, those logs will now read <code>anonymous/guest</code>. Audit before deploy.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="codex">7. Codex coordination &mdash; do-not-collide note</h2>
+<div class="card">
+  <p>Codex's 6 PM scope is HTTP testing discipline. To avoid stepping on each
+  other this session deliberately did <b>not</b> touch:</p>
+  <ul class="compact">
+    <li><code>scripts/http-hardening-smoke.js</code></li>
+    <li><code>test/run-tests.js</code> (the 17-phase HTTP harness)</li>
+    <li>Any route/handler that an HTTP test would exercise (no signature changes)</li>
+  </ul>
+  <p>What Codex can rely on from this session:</p>
+  <ul class="compact">
+    <li><b>RBAC headers no longer accepted in production.</b> If a Codex HTTP test was passing identity via <code>x-user-role</code> without a JWT and without setting <code>ENABLE_DEV_AUTH_BYPASS=true</code>, that test will now 403. Set both env flags in the test harness.</li>
+    <li><b>JWT_SECRET is not exported.</b> Tests that signed tokens via <code>auth.JWT_SECRET</code> need to use <code>auth.signToken({...})</code>.</li>
+    <li><b>The verifier exists.</b> Codex's HTTP discipline can call it as a pre-test gate: <code>python scripts/ehr_harden_verify_skill.py --path . --strict</code> &mdash; exit 1 means "fix structural drift before running HTTP tests".</li>
+  </ul>
+</div>
+
+<h2 id="design">8. Claude Design redesign prompt</h2>
+<div class="card">
+  <p>A separate one-shot prompt for the Claude Design surface is checked in at
+  <code>docs/CLAUDE_DESIGN_REDESIGN_PROMPT.md</code>. Summary:</p>
+  <ul class="compact">
+    <li><b>Goal</b>: Redesign so the EHR looks clinical-grade, not a coding sandbox.</li>
+    <li><b>Deliverable</b>: design tokens + component library + 5 hero screens + voice mode.</li>
+    <li><b>Hard constraints</b>: synthetic-demo banner persistent; Tier 3 visual gate mandatory; WCAG 2.1 AA; no fake patient data; no "AI ✨" marketing copy.</li>
+  </ul>
+  <p>Paste the file's contents into Claude Design as the project brief. It is intentionally self-contained.</p>
+</div>
+
+<h2 id="run">9. How to re-run &amp; verify</h2>
+<pre>cd C:\Users\micha\files\Clinical\EHR\.claude\worktrees\lucid-mclaren-57925a
+
+# Run the unit tests (85 tests)
+npm run test:unit
+
+# Run the verifier in strict mode
+python scripts\ehr_harden_verify_skill.py ^
+  --path . ^
+  --proving-ground C:\Users\micha\files\ProvingGround ^
+  --include-autobetter --strict
+
+# Optional: machine-readable JSON
+python scripts\ehr_harden_verify_skill.py --path . --json --strict
+
+# Optional: redacted markdown report
+python scripts\ehr_harden_verify_skill.py --path . --strict ^
+  --write-report _ultraplan\verify_report_2026-05-09.md</pre>
+
+<h2 id="changelog">10. File-by-file changelog</h2>
+<table>
+  <thead><tr><th>File</th><th>Change</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>server/security/rbac.js</code></td>
+      <td>Replaced <code>getRequestIdentity</code> with a 4-tier precedence resolver (JWT &gt; session &gt; dev-bypass header &gt; guest). Removed unconditional <code>req.headers['x-user-role']</code> fallbacks from <code>requireRole</code>, <code>requirePermission</code>, <code>filterResponse</code>, <code>requireResourceAccess</code>.</td>
+      <td>Closes the S-C4 regression that survived the 04-07 fix log.</td>
+    </tr>
+    <tr>
+      <td><code>server/security/hipaa-middleware.js</code></td>
+      <td>Added <code>resolveIdentityForAudit</code> with the same gate. <code>sessionTracker</code> and <code>rateLimiter</code> route through it.</td>
+      <td>Same regression, parallel module.</td>
+    </tr>
+    <tr>
+      <td><code>scripts/ehr_harden_verify_skill.py</code> (NEW)</td>
+      <td>~520-line Python stdlib verifier. 12 check groups + secret-leakage scan. Read-only by default. <code>--strict</code> turns warnings into FAILs for alignment-critical items.</td>
+      <td>Implements the 05-03 Opus plan's missing artifact.</td>
+    </tr>
+    <tr>
+      <td><code>test/unit/auth-identity.test.js</code> (NEW)</td>
+      <td>8 unit tests covering JWT non-export, signToken/verifyToken round-trip, S-C4 dev-bypass gate, and identity precedence.</td>
+      <td>Closes the auth-test gap flagged by the verifier.</td>
+    </tr>
+    <tr>
+      <td><code>MODULE_CATALOG.md</code></td>
+      <td>Added PatientLink, Patient App, MediVault rows. Locked count to 13 (10 encounter + 3 governance). Noted AWV pending merge.</td>
+      <td>Catalog was 3 modules behind the registry.</td>
+    </tr>
+    <tr>
+      <td><code>README.md</code></td>
+      <td>"9-module" &rarr; "13-module" in the docs table.</td>
+      <td>Stale count.</td>
+    </tr>
+    <tr>
+      <td><code>VISION.md</code></td>
+      <td>"nine specialized agents" / "9-module" updated to "thirteen specialized modules" / "13-module" in three places.</td>
+      <td>Stale count.</td>
+    </tr>
+    <tr>
+      <td><code>package.json</code></td>
+      <td>Description: "9-module" &rarr; "13-module clinical workflow runtime (10 encounter + 3 governance; AWV pending merge)".</td>
+      <td>Stale count.</td>
+    </tr>
+    <tr>
+      <td><code>docs/CLAUDE_DESIGN_REDESIGN_PROMPT.md</code> (NEW)</td>
+      <td>One-shot prompt for the Claude Design surface.</td>
+      <td>The user's separate UI redesign request.</td>
+    </tr>
+    <tr>
+      <td><code>_ultraplan/ULTRA_PLAN_HARDENING_REPORT_2026-05-09.html</code> (NEW, this file)</td>
+      <td>Single HTML deliverable summarizing weaknesses, fixes, residual gaps, verifier output, and next steps.</td>
+      <td>The user's "one HTML file after you have completed all the files runs" request.</td>
+    </tr>
+  </tbody>
+</table>
+
+<footer>
+  Generated 2026-05-09 by Opus 4.7 inside the <code>claude/lucid-mclaren-57925a</code> worktree.
+  Verifier: <code>scripts/ehr_harden_verify_skill.py</code>. Tests: <code>npm run test:unit</code>. No PHI was read or written during this run.
+</footer>
+
+</div>
+</body>
+</html>

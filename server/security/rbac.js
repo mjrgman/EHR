@@ -570,11 +570,36 @@ function getPhiScopeFields(roleName) {
 // EXPRESS MIDDLEWARE
 // ==========================================
 
+// S-C4 hardening: identity precedence is JWT > session > dev-bypass header > guest.
+// Header-based identity is honored ONLY when NODE_ENV=development AND
+// ENABLE_DEV_AUTH_BYPASS=true (matching the gate in security/auth.js).
 function getRequestIdentity(req) {
-  return {
-    userRole: req.session?.userRole || req.user?.role || 'guest',
-    userId: String(req.session?.userId || req.user?.username || req.user?.sub || 'anonymous'),
-  };
+  // 1. JWT identity (set by auth.requireAuth from a verified token)
+  if (req.user?.role) {
+    return {
+      userRole: req.user.role,
+      userId: String(req.user.username || req.user.sub || 'authenticated'),
+    };
+  }
+  // 2. Validated session identity
+  if (req.session?.userRole) {
+    return {
+      userRole: req.session.userRole,
+      userId: String(req.session.userId || 'session'),
+    };
+  }
+  // 3. Dev-only header bypass — both env flags must be set
+  const devBypass =
+    process.env.NODE_ENV === 'development' &&
+    process.env.ENABLE_DEV_AUTH_BYPASS === 'true';
+  if (devBypass && req.headers && req.headers['x-user-role']) {
+    return {
+      userRole: req.headers['x-user-role'],
+      userId: String(req.headers['x-user-id'] || 'dev-bypass'),
+    };
+  }
+  // 4. Default
+  return { userRole: 'guest', userId: 'anonymous' };
 }
 
 /**

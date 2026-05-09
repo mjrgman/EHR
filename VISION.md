@@ -35,11 +35,11 @@ The physician talks. The MA talks. The patient calls. The agents listen, triage,
 
 ## III. Agent Architecture
 
-The system operates through **nine specialized agents**, each mapped to a real human role or clinical function in the practice. Every agent has a defined scope of authority, escalation pathways, and a learning memory. The nine agents are: Phone Triage, Front Desk, MA, Physician (pre-visit), and Scribe, CDS, Orders, Coding, Quality (encounter pipeline).
+The system operates through **thirteen specialized modules** (with the Annual Wellness Visit module pending merge from main, after which it will be fourteen). Each module is mapped to a real human role or clinical function in the practice. Every module has a defined scope of authority, escalation pathways, and a learning memory. The encounter modules are: Phone Triage, Front Desk, MA, Physician (pre-visit), and Scribe, CDS, Domain Logic, Orders, Coding, Quality (encounter pipeline). The patient-data governance modules — PatientLink, Patient App, and MediVault — run alongside the encounter pipeline.
 
 ### Canonical Module Map
 
-The runtime should be understood as a 9-module clinical workflow system:
+The runtime should be understood as a 13-module clinical workflow system:
 
 | Module | Workflow band | Tier | Human counterpart | Core job |
 |---|---|---|---|---|
@@ -496,7 +496,7 @@ This is not a stateless system. Every agent has persistent memory.
 - Base agent class with status tracking, timing, event emission
 - Orchestrator with dependency-aware parallel execution
 - Shared patient context schema
-- Encounter runtime operational (Scribe, CDS, Orders, Coding, Quality) as the foundation of the broader 9-module system
+- Encounter runtime operational (Scribe, CDS, Orders, Coding, Quality) as the foundation of the broader 13-module system
 
 **To be built:**
 - Phone Triage Agent (voice AI integration)
@@ -513,7 +513,7 @@ This is not a stateless system. Every agent has persistent memory.
 ## X. Development Phases
 
 **Phase 1 — Foundation (Complete)**
-Core EHR data model, workflow engine, CDS rule engine, audit logging, SOAP note generation, and the encounter-centered runtime that later expanded into the full 9-module system.
+Core EHR data model, workflow engine, CDS rule engine, audit logging, SOAP note generation, and the encounter-centered runtime that later expanded into the full 13-module system (10 encounter + 3 patient-data governance).
 
 **Phase 2 — Agent Intelligence (Current)**
 Physician Agent learning engine, MA Agent protocol system, pre-visit briefing generator, inter-agent communication bus.

@@ -407,7 +407,7 @@ Additional documentation is included in the repo:
 
 | File | Description |
 |------|-------------|
-| `MODULE_CATALOG.md` | Canonical 9-module runtime map and safety boundaries |
+| `MODULE_CATALOG.md` | Canonical 13-module runtime map and safety boundaries (10 encounter + 3 governance; AWV pending merge) |
 | `VISION.md` | System architecture and design philosophy |
 | `docs/ARCHITECTURE.md` | Single-page architecture overview for external readers |
 | `docs/DEMO_SCRIPT.md` | 3-minute demo walkthrough (ambient → specialty → LabCorp → export) |
