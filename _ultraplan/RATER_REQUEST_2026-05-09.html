@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RATER_REQUEST_2026-05-09.md</title>
+<style>
+body {
+  font-family: -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  max-width: var(--width, 900px);
+  margin: 40px auto;
+  padding: 0 28px;
+  line-height: 1.65;
+  color: #2a2a2a;
+  background: #fefdfb;
+}
+h1, h2, h3, h4, h5, h6 {
+  color: #1a3a52;
+  font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  font-weight: 700;
+  line-height: 1.25;
+}
+h1 { border-bottom: 2px solid #b8860b; padding-bottom: 10px; margin-top: 0.5em; }
+h2 { border-bottom: 1px solid #e0d8c8; padding-bottom: 6px; margin-top: 2em; }
+h3 { margin-top: 1.5em; color: #4a5f7f; }
+a { color: #b8860b; text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  font-family: Consolas, 'Fira Code', 'JetBrains Mono', monospace;
+  background: #f4f0e8;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.92em;
+  color: #1a3a52;
+}
+pre {
+  background: #f4f0e8;
+  padding: 16px 20px;
+  border-radius: 6px;
+  overflow-x: auto;
+  border-left: 3px solid #4a5f7f;
+}
+pre code { background: none; padding: 0; font-size: 0.88em; }
+blockquote {
+  border-left: 4px solid #b8860b;
+  padding: 8px 18px;
+  color: #4a4a4a;
+  margin: 1em 0;
+  background: #f5f1e8;
+  font-style: italic;
+}
+table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+  font-size: 0.95em;
+}
+th, td {
+  border: 1px solid #d8d0c0;
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: #f5f1e8; font-weight: 600; color: #1a3a52; }
+tr:nth-child(even) td { background: #fafaf5; }
+hr { border: none; border-top: 1px solid #b8860b; margin: 2em 0; }
+strong { color: #1a3a52; font-weight: 600; }
+em { color: #4a5f7f; }
+ul, ol { padding-left: 1.5em; }
+li { margin: 0.25em 0; }
+img { max-width: 100%; height: auto; display: block; margin: 1em auto; }
+.emoji { font-style: normal; }
+
+/* Callout boxes for common patterns */
+blockquote p:first-child strong:first-child { color: #a1322a; }
+
+/* Page footer watermark */
+body::after {
+  content: 'Rendered by HAL render_md.py — Measured Canon preview';
+  display: block;
+  margin-top: 3em;
+  padding-top: 1em;
+  border-top: 1px dashed #d8d0c0;
+  color: #999;
+  font-size: 0.8em;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+<h1 id="rater-request-ehr-ultra-plan-hardening-report-2026-05-09">Rater Request — EHR Ultra Plan Hardening Report (2026-05-09)</h1>
+<p><strong>For Michael to hand off</strong> (paste into Grok, Claude.ai project, Codex, or any rater surface).<br />
+The file under review is synthetic-demo only — no PHI. Safe to send to any LLM.</p>
+<hr />
+<h2 id="what-youre-rating">What you're rating</h2>
+<p>A single HTML file produced by an Opus-4.7 session that worked through the EHR project's three layered Ultra plans (an audit from 2026-03-28, a 77-finding code review from 2026-04-07, and an Opus harden-verify plan from 2026-05-03) before a 6 PM Codex HTTP-testing handoff.</p>
+<p><strong>File:</strong> <code>_ultraplan/ULTRA_PLAN_HARDENING_REPORT_2026-05-09.html</code><br />
+<strong>Branch:</strong> <code>claude/lucid-mclaren-57925a</code> on <code>https://github.com/mjrgman/AI-EHR</code><br />
+<strong>Commit:</strong> <code>89fc200</code> — <code>harden(ultra-plan): close S-C4 RBAC regression, add verifier, reconcile module count</code></p>
+<p>The report claims:<br />
+- 3 real holes were plugged (an S-C4 RBAC regression, the missing verifier script, and a module-catalog gap)<br />
+- A 12-group Python verifier was built at <code>scripts/ehr_harden_verify_skill.py</code><br />
+- 8 new auth-identity unit tests were added (full suite 85/85 passing)<br />
+- Module-count language was reconciled to 13 across all docs (10 encounter + 3 governance, AWV pending merge)<br />
+- Verifier exit state in <code>--strict</code> mode: <strong>66 PASS / 0 WARN / 0 FAIL</strong></p>
+<h2 id="what-i-want-from-you">What I want from you</h2>
+<p>A blunt, evidence-based rating across the axes below. Don't be polite — if a claim doesn't hold up under inspection, say so with the file:line and the exact disagreement. The goal is to catch anything Opus missed before Codex builds HTTP test discipline on top of this work.</p>
+<h2 id="falsifiable-claims-to-verify">Falsifiable claims to verify</h2>
+<p>For each, either confirm or refute with code-level evidence:</p>
+<ol>
+<li>
+<p><strong>S-C4 fix is correct.</strong> <code>server/security/rbac.js</code> no longer defaults to <code>'physician'</code> when <code>NODE_ENV != 'production'</code>, and no longer reads <code>req.headers['x-user-role']</code> outside the explicit dev-bypass branch. Identity precedence is JWT → session → dev-bypass-with-both-env-flags → guest.</p>
+</li>
+<li>
+<p><strong><code>JWT_SECRET</code> is not exported.</strong> <code>server/security/auth.js</code>'s <code>module.exports</code> does not include the <code>JWT_SECRET</code> binding (comments mentioning it are not exports).</p>
+</li>
+<li>
+<p><strong>Verifier check groups match the 05-03 Opus plan §5.</strong> The verifier covers groups A–K from the plan plus an L (regression-sample) and Z (secret leakage). Read <code>00_OPUS_EHR_HARDEN_VERIFY_FULL_ITERATION_PLAN_2026-05-03.md</code> against <code>scripts/ehr_harden_verify_skill.py</code> and flag any plan-required check that's missing or weakly implemented.</p>
+</li>
+<li>
+<p><strong>The 8 new auth tests are meaningful, not vacuous.</strong> Read <code>test/unit/auth-identity.test.js</code>. Each test should exercise a real branch — none should pass for trivial reasons (e.g. testing a constant). The S-C4 regression-guard test specifically must fail if you revert the rbac.js fix.</p>
+</li>
+<li>
+<p><strong>Module-count reconciliation is consistent.</strong> <code>server/agents/module-registry.js</code> has 13 entries in <code>MODULE_ORDER</code>. <code>MODULE_CATALOG.md</code> documents all 13. <code>README.md</code>, <code>VISION.md</code>, <code>package.json</code> all use 13-module language. Anything that still says 9 or 10 or 11 is a missed reconciliation.</p>
+</li>
+<li>
+<p><strong>The verifier's <code>--strict</code> clean run is real.</strong> Run it yourself if you can:<br />
+<code>python scripts/ehr_harden_verify_skill.py --path . \
+     --proving-ground C:/Users/micha/files/ProvingGround --strict</code><br />
+   Any FAIL or WARN that surfaces is a hole the report didn't capture.</p>
+</li>
+<li>
+<p><strong>Codex won't collide.</strong> The session did not edit <code>scripts/http-hardening-smoke.js</code> or <code>test/run-tests.js</code>. Confirm via <code>git show 89fc200 --stat</code>. If either was touched, the don't-collide claim is false.</p>
+</li>
+</ol>
+<h2 id="rating-axes-10-point-scale-per-axis">Rating axes (10-point scale per axis)</h2>
+<p>Score each 1–10 with a one-line justification. Lower is worse.</p>
+<table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A1. Hole detection</strong></td>
+<td>Did the session find the real holes hidden in the layered Ultra plans? Bonus if you can find a hole the report missed.</td>
+</tr>
+<tr>
+<td><strong>A2. Fix correctness</strong></td>
+<td>Are the actual code changes (<code>server/security/rbac.js</code>, the new test, the verifier) correct, or do they introduce new issues?</td>
+</tr>
+<tr>
+<td><strong>A3. Verifier quality</strong></td>
+<td>Does <code>scripts/ehr_harden_verify_skill.py</code> actually catch the things it claims to catch? Are any check groups weak (e.g. matching on substrings that would slip past simple obfuscation)?</td>
+</tr>
+<tr>
+<td><strong>A4. Test quality</strong></td>
+<td>Are the 8 new tests meaningful? Specifically does the S-C4 regression-guard test really fail if you revert the rbac.js fix?</td>
+</tr>
+<tr>
+<td><strong>A5. Doc reconciliation</strong></td>
+<td>Is the 13-module language consistent everywhere, or did stale "9-module" / "nine specialized" / "10-row" text survive somewhere?</td>
+</tr>
+<tr>
+<td><strong>A6. Residual-gap honesty</strong></td>
+<td>Are the open items in §6 of the report (the "still open" table) accurate, or is something unfairly buried there that should have been fixed in this session?</td>
+</tr>
+<tr>
+<td><strong>A7. Codex handoff readiness</strong></td>
+<td>If you were Codex about to harden HTTP testing on this branch, would you trust this baseline? What would you want changed first?</td>
+</tr>
+<tr>
+<td><strong>A8. Report communication</strong></td>
+<td>Is the HTML readable, scannable, and honest? Or is it dressed-up self-promotion?</td>
+</tr>
+</tbody>
+</table>
+<h2 id="output-format">Output format</h2>
+<p>Return a single fenced JSON block — nothing else — so it can be parsed mechanically:</p>
+<pre><code class="language-json">{
+  &quot;claim_verifications&quot;: {
+    &quot;1_sc4_fix&quot;: { &quot;verdict&quot;: &quot;confirmed | refuted | partial&quot;, &quot;evidence&quot;: &quot;file:line + one-sentence finding&quot; },
+    &quot;2_jwt_not_exported&quot;: { &quot;verdict&quot;: &quot;...&quot;, &quot;evidence&quot;: &quot;...&quot; },
+    &quot;3_verifier_groups_match_plan&quot;: { &quot;verdict&quot;: &quot;...&quot;, &quot;evidence&quot;: &quot;...&quot; },
+    &quot;4_tests_meaningful&quot;: { &quot;verdict&quot;: &quot;...&quot;, &quot;evidence&quot;: &quot;...&quot; },
+    &quot;5_module_count_consistent&quot;: { &quot;verdict&quot;: &quot;...&quot;, &quot;evidence&quot;: &quot;...&quot; },
+    &quot;6_strict_clean_run&quot;: { &quot;verdict&quot;: &quot;...&quot;, &quot;evidence&quot;: &quot;ran|skipped, summary line&quot; },
+    &quot;7_no_codex_collision&quot;: { &quot;verdict&quot;: &quot;...&quot;, &quot;evidence&quot;: &quot;...&quot; }
+  },
+  &quot;scores&quot;: {
+    &quot;A1_hole_detection&quot;: { &quot;score&quot;: 0, &quot;why&quot;: &quot;...&quot; },
+    &quot;A2_fix_correctness&quot;: { &quot;score&quot;: 0, &quot;why&quot;: &quot;...&quot; },
+    &quot;A3_verifier_quality&quot;: { &quot;score&quot;: 0, &quot;why&quot;: &quot;...&quot; },
+    &quot;A4_test_quality&quot;: { &quot;score&quot;: 0, &quot;why&quot;: &quot;...&quot; },
+    &quot;A5_doc_reconciliation&quot;: { &quot;score&quot;: 0, &quot;why&quot;: &quot;...&quot; },
+    &quot;A6_residual_gap_honesty&quot;: { &quot;score&quot;: 0, &quot;why&quot;: &quot;...&quot; },
+    &quot;A7_codex_handoff_readiness&quot;: { &quot;score&quot;: 0, &quot;why&quot;: &quot;...&quot; },
+    &quot;A8_report_communication&quot;: { &quot;score&quot;: 0, &quot;why&quot;: &quot;...&quot; }
+  },
+  &quot;missed_holes&quot;: [
+    &quot;Each item: short description + file:line + why this is a real hole&quot;
+  ],
+  &quot;blocking_for_codex_6pm&quot;: [
+    &quot;Anything that should be fixed before Codex starts the HTTP-test discipline run&quot;
+  ],
+  &quot;overall&quot;: {
+    &quot;go_no_go_for_6pm&quot;: &quot;GO | NO-GO | CONDITIONAL&quot;,
+    &quot;one_paragraph_summary&quot;: &quot;...&quot;
+  }
+}
+</code></pre>
+<h2 id="constraints-on-you-the-rater">Constraints on you, the rater</h2>
+<ul>
+<li>Don't read or infer PHI; this codebase is synthetic-demo only and the report explicitly says so.</li>
+<li>Don't run <code>npm test</code> against a live database — it uses a local SQLite test DB which is fine, but don't connect to anything external.</li>
+<li>If you can't run the verifier (no Python in your sandbox), say so in <code>claim_verifications.6_strict_clean_run.evidence</code> and skip that one.</li>
+<li>Cite file paths exactly. <code>server/security/rbac.js:585</code> is acceptable; "the auth file" is not.</li>
+<li>If you find a hole I missed, also include the <em>fix</em> you'd recommend (one or two sentences).</li>
+<li>Keep prose minimal outside the JSON block — the JSON is the deliverable.</li>
+</ul>
+</body>
+</html>

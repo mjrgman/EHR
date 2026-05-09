@@ -21,7 +21,7 @@ Built by Dr. Michael Renner / [ImpactMed Consulting, LLC](https://impactmedconsu
 - **HRT / Peptide / Functional Medicine support** — specialty-medicine `DomainLogicAgent` with Tier 3 dosing-approval gate, hormone/peptide keyword routing, and a dedicated Encounter tab (see [HRT & Peptide Support](#hrt--peptide-support))
 - **LabCorp integration** — pluggable client with OAuth2 + PDF/XML result parsing and mock mode for offline tests (see [LabCorp Integration](#labcorp-integration))
 - **MediVault patient-owned export** — one-click FHIR R4 Bundle download of the patient's full record via `GET /api/medivault/export/:patientId`
-- **Multi-agent architecture** — 10 specialized AI agents (physician, MA, front desk, phone triage, CDS, domain logic, quality, coding, orders, scribe, plus MediVault and PatientLink support modules) coordinated by an orchestrator via message bus
+- **Multi-agent architecture** — 13 specialized clinical workflow modules (10 encounter modules: phone triage, front desk, MA, physician, scribe, CDS, domain logic, orders, coding, quality; plus 3 patient-data governance modules: PatientLink, Patient App, MediVault) coordinated by an orchestrator via message bus. Canonical roster: `server/agents/module-registry.js` (`MODULE_ORDER`). The Annual Wellness Visit (AWV) module is pending merge from main, after which this becomes 14.
 - **Provider learning** — adapts to individual physician documentation style and preferences
 - **Prescription and lab ordering** — structured orders from natural language
 - **Full audit trail** — HIPAA-compliant access logging on all PHI endpoints
@@ -32,7 +32,7 @@ Built by Dr. Michael Renner / [ImpactMed Consulting, LLC](https://impactmedconsu
 
 ## Clinical Modules
 
-The runtime is organized as nine explicit workflow modules with defined handoffs and safety boundaries.
+The runtime is organized as thirteen explicit workflow modules with defined handoffs and safety boundaries — ten encounter modules and three patient-data governance modules. AWV pending merge.
 
 | Module | Stage | Tier | Mission |
 |---|---|---|---|

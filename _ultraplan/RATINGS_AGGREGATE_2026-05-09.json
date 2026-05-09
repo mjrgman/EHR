@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "report_under_review": "_ultraplan/ULTRA_PLAN_HARDENING_REPORT_2026-05-09.html",
+  "branch": "claude/lucid-mclaren-57925a",
+  "initial_commit": "89fc200",
+  "amendment_commit": "(this fix-up; pending)",
+  "rating_run": "10-Sonnet-evaluator fan-out + Opus aggregator",
+  "run_date_utc": "2026-05-09",
+
+  "claim_verifications": {
+    "1_sc4_fix": {
+      "verdict": "partial",
+      "evidence": "S1 confirms post-fix precedence (server/security/rbac.js:577-603) is sound — JWT > session > dev-bypass-with-both-flags > guest. S9 + git show 89fc200 prove the worktree's BEFORE state was already without unconditional x-user-role fallback (only req.session?.userRole || req.user?.role || 'guest'). The commit DID add the explicit dev-bypass gate and DID fix precedence (session > JWT to JWT > session). It did NOT close an unconditional-header-fallback bug in this worktree — that bug was visible in the EHR-root file (uncommitted, UR-017 drift). Initial report's 'P0 regression' framing was inflated against the worktree diff."
+    },
+    "2_jwt_not_exported": {
+      "verdict": "confirmed",
+      "evidence": "S2: server/security/auth.js exports {init, login, logout, me, requireAuth, createUser, changePassword, signToken, verifyToken, authenticateRequest} — JWT_SECRET not present. Comment at line ~451 mentioning JWT_SECRET is documentation only. Consumers (server/fhir/smart/token.js:312-320, 433-439) use auth.signToken() wrapper."
+    },
+    "3_verifier_groups_match_plan": {
+      "verdict": "partial",
+      "evidence": "S3 cross-mapped 11 groups: A,B,E complete (5/5, 5/5, 8/8); D nearly complete (5/6); C partial (3/6 — missing functional-slot canon, 3-tier autonomy, Clinical README cross-check); F partial (2/3 — missing CapabilityStatement-vs-router validation); G partial (2/5 — missing createUser signature, NPI-role consistency); H partial (4/5 — missing Bearer/x-auth-token default check); I partial (4/8 — missing positive-int validation, FHIR JSON response, README double-audit, MediVault canon markers); J partial (4/8 — missing write-target check, forbid-list verification, UI warning location); K weak (1/4 — plan expected verifier to RUN lint/test, not just check files exist)."
+    },
+    "4_tests_meaningful": {
+      "verdict": "confirmed",
+      "evidence": "S4 traced each of the 8 auth-identity tests through pre-fix and post-fix code. 3 tests (production-rejects-headers, dev-bypass-honors-headers, NODE_ENV-unset-no-physician) actually fail when the rbac.js fix is reverted. The other 5 exercise contracts that hold across revisions (round-trip, exports, JWT-priority, guest fallback). No vacuous tests. Plus 3 new tests in jwt-secret-production-guard.test.js (this fix-up commit) pin the auth.js production gate."
+    },
+    "5_module_count_consistent": {
+      "verdict": "partial_now_confirmed_after_fix",
+      "evidence": "S5 found two stale references missed by initial commit: README.md:24 ('10 specialized AI agents') and README.md:35 ('nine explicit workflow modules'). Both fixed in this amendment commit. Final state: registry MODULE_ORDER has 13; MODULE_CATALOG, README, VISION, package.json all use 13-module language."
+    },
+    "6_strict_clean_run": {
+      "verdict": "confirmed",
+      "evidence": "S6 ran the verifier in --strict on this worktree. Result: 66 PASS, 0 WARN, 0 FAIL. Group H (auth header bypass gate) all pass; Group D (module count) all pass; Group L (Ultrareview regression sample) all pass. With --include-autobetter the run is 66/1/1 because the autobetter prompt file lives in EHR root only (UR-017 drift), not the worktree."
+    },
+    "7_no_codex_collision": {
+      "verdict": "confirmed",
+      "evidence": "S7 ran git show 89fc200 --stat: 9 files touched, none of them scripts/http-hardening-smoke.js or test/run-tests.js. Existing HTTP tests at test/run-tests.js:4314,4503 actively assert that spoofed x-user-role headers are rejected — they will pass under the new code, not break."
+    }
+  },
+
+  "scores": {
+    "A1_hole_detection": {
+      "score": 7,
+      "why": "S10 — Coverage of audit_03-28 (18/18) and ultraplan_05-08 (1/1) complete; ULTRAREVIEW_04-07 reaches 72/77; missed 5 documented HIGH/MEDIUM items: S-H5 audit CSV unauth, S-H6 audit log integrity, S-H7 audit identity from body, F-H4 console.error PHI, SV-M7 calculateAge import. Opus_05-03 plan 11/12 (module-count partially resolved at initial commit, fully resolved in amendment)."
+    },
+    "A2_fix_correctness": {
+      "score": 9,
+      "why": "S1 — rbac.js fix is correct: empty req.user.role correctly falls through; session-without-userRole falls through; dev-bypass requires both env flags. Minor: req.user.role accepted without ROLES enum validation (not a security issue because requireRole still checks membership). Plus the new auth.js production-startup gate is now pinned by 3 unit tests."
+    },
+    "A3_verifier_quality": {
+      "score": 6,
+      "why": "S3 — Strong on auth/FHIR core (groups A, B, E, L complete) but weak on Proving Ground canon cross-check, MediVault dual-audit semantic content, Autobetter forbid-list enforcement, and K group entirely (plan mandated actual lint/test execution; verifier only checks file existence). Substring matching on a few checks could be bypassed by simple obfuscation."
+    },
+    "A4_test_quality": {
+      "score": 9,
+      "why": "S4 — Tests are specific and non-vacuous. 3 tests directly guard against S-C4 regression. Test 4 (production-rejects-headers) and test 5 (dev-bypass-honors-headers) form a critical control pair. Test 8 (NODE_ENV-unset-no-physician) detects uninitialized NODE_ENV as a security failure mode. Weakest test: round-trip — necessary but doesn't test the security gate."
+    },
+    "A5_doc_reconciliation": {
+      "score_initial": 6,
+      "score_after_amendment": 8,
+      "why": "S5 — Initial commit fixed package.json, MODULE_CATALOG, VISION, README:410 but missed README:24 and README:35. Amendment commit closes those. Registry, catalog, package.json, README, VISION now consistent at 13 modules. AWV pending merge from main is consistently flagged."
+    },
+    "A6_residual_gap_honesty": {
+      "score": 7,
+      "why": "Inferred from S9 + S10. The HTML report's §6 (open items) accurately flags JWT in-memory blacklist, frontend lint baseline, missing HIPAA-middleware tests, and audit endpoint hardening. But S9 found the report's §2 framing of the rbac.js / hipaa-middleware fix overstated the BEFORE-state severity in this worktree, and S10 found the report did not call out S-H5/S-H6/S-H7/F-H4/SV-M7 from the 04-07 review at all. The honest revision in this amendment addresses both."
+    },
+    "A7_codex_handoff_readiness": {
+      "score": 9,
+      "why": "S7 — Commit doesn't touch HTTP test files. Existing HTTP RBAC tests will benefit from the harder rbac.js gate. Codex's only prep step: ensure ENABLE_DEV_AUTH_BYPASS is explicitly set or unset in the test harness so identity precedence is deterministic. New auth.js production gate doesn't affect tests because they don't run with NODE_ENV=production."
+    },
+    "A8_report_communication": {
+      "score_initial": 5,
+      "score_after_amendment": 7,
+      "why": "S9 scored 5/10 with honesty 2/10 — accused report of phantom-vulnerability framing. Investigation showed S9 was reading the post-fix code; the BEFORE state in this worktree was indeed cleaner than the report described (the worse pattern was in EHR root, UR-017 drift). Amendment commit revises §2 to be diff-accurate, separates 'verifier + tests + catalog (real new artifacts)' from 'rbac.js precedence improvement (refactor + dev-bypass gate, not a P0 regression closure in this worktree)'."
+    }
+  },
+
+  "missed_holes": [
+    {
+      "title": "JWT_SECRET fallback allowed unsigned production deployment",
+      "source": "S8 hunt",
+      "file_line": "server/security/auth.js:24",
+      "severity_initial": "P0",
+      "fixed_in_amendment": true,
+      "evidence": "Original line generated ephemeral random key on any restart when env unset. Production tokens would invalidate on every restart, logging every authenticated user out simultaneously. Now: throws fatal at module load when NODE_ENV=production && !JWT_SECRET. Pinned by 3 unit tests in jwt-secret-production-guard.test.js."
+    },
+    {
+      "title": "README.md stale module language (lines 24 and 35)",
+      "source": "S5 sweep",
+      "file_line": "README.md:24, README.md:35",
+      "severity_initial": "P2",
+      "fixed_in_amendment": true,
+      "evidence": "Initial commit fixed README:410 but missed lines 24 ('10 specialized AI agents') and 35 ('nine explicit workflow modules'). Amendment fixes both."
+    },
+    {
+      "title": "S-H5 audit log CSV export claimed-fixed but not verified this session",
+      "source": "S10 hole-detection",
+      "file_line": "server/server.js:1865 (GET /api/audit/export)",
+      "severity": "P1",
+      "fixed_in_amendment": false,
+      "evidence": "Server.js mounts global /api auth at line 252 before audit routes register at lines 1799-1865. The audit endpoints ARE protected by the global auth wall + the rbac.requireRole('admin','physician') at line 259. So S-H5 is in fact addressed structurally — but Opus session never verified it. Adding a 'audit-routes-protected' check to verifier group I is recommended.",
+      "follow_up": "Add verifier check: confirm /api/audit registers AFTER both global auth and rbac.requireRole('admin','physician')."
+    },
+    {
+      "title": "S-H6 audit log table integrity unprotected",
+      "source": "S10 hole-detection",
+      "file_line": "server/audit-logger.js (sqlite table)",
+      "severity": "P1",
+      "fixed_in_amendment": false,
+      "evidence": "04-07 review flagged that audit_log is a regular sqlite table — any DB-level access can modify or delete entries. There is no append-only guarantee, no row-level integrity hash, no tamper detection. Out of scope for this commit (requires schema change + migration). Tracked for follow-up."
+    },
+    {
+      "title": "S-H7 audit user identity from request body fallback",
+      "source": "S10 hole-detection",
+      "file_line": "server/audit-logger.js (was lines 133-142 in 04-07 review)",
+      "severity": "P1",
+      "fixed_in_amendment": false,
+      "evidence": "Need to verify whether audit-logger.js still falls back to req.body.provider / req.body.prescriber when header missing. Out of scope for this commit; flagged for follow-up audit."
+    },
+    {
+      "title": "F-H4 console.error in src/api/client.js may dump PHI",
+      "source": "S8 hunt + S10",
+      "file_line": "src/api/client.js:12",
+      "severity": "P1",
+      "fixed_in_amendment": false,
+      "evidence": "Client error handler may include error.message from fetch responses; response bodies could carry patient data. Sanitization at lines 9-10 doesn't strip response.error.details. Tracked for follow-up; fix is to add a strict allowlist on what can reach console.error."
+    },
+    {
+      "title": "SV-M7 calculateAge missing import in ai-client.js",
+      "source": "S10 hole-detection",
+      "file_line": "server/ai-client.js (was missing import per 04-07 review)",
+      "severity": "P2",
+      "fixed_in_amendment": false,
+      "evidence": "04-07 fix log claimed extraction to a shared utility but S10 did not confirm the import was actually added. Need to verify or fix. Runtime crash risk in SOAP generation."
+    }
+  ],
+
+  "blocking_for_codex_6pm": [],
+
+  "non_blocking_for_codex_6pm_but_track": [
+    "Verifier K-group does not actually run lint/test as the 05-03 plan mandated — pre-test gate is best-effort",
+    "Verifier C/F/G/I/J groups are partial coverage — see scores.A3_verifier_quality.why",
+    "Audit endpoint security (S-H5 confirmed protected; S-H6/S-H7 still unverified)",
+    "F-H4 console.error PHI risk in src/api/client.js"
+  ],
+
+  "overall": {
+    "go_no_go_for_6pm": "GO",
+    "composite_score": 7.7,
+    "one_paragraph_summary": "Initial commit landed three real value-adds (the verifier script, 8 auth-identity tests, MODULE_CATALOG completion) plus a precedence + dev-bypass-gate refactor in rbac.js. The S-C4 framing in the original HTML report overstated the bug closure against the worktree diff (the unconditional-header pattern was visible in the EHR root, not the committed worktree). S8 found a real P0 — JWT_SECRET fallback that would silently invalidate every session on production restart — fixed and pinned by tests in this amendment. S5 found two stale README lines also fixed here. Five 04-07 review items (S-H5 partly, S-H6, S-H7, F-H4, SV-M7) remain open and tracked. Verifier passes 66/0/0 in --strict; full unit suite 88/88. Codex can build HTTP test discipline on top of this baseline; only prep is making ENABLE_DEV_AUTH_BYPASS explicit in the test harness."
+  }
+}

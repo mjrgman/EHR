@@ -73,15 +73,27 @@
 <header>
   <span class="banner">Synthetic EHR Demo &middot; No PHI &middot; Not for clinical use</span>
   <h1>EHR Ultra Plan &mdash; Hardening Report</h1>
-  <p class="muted">Worktree <code>claude/lucid-mclaren-57925a</code> &middot; 2026-05-09 &middot; Pre-6 PM Codex HTTP-test handoff</p>
+  <p class="muted">Worktree <code>claude/lucid-mclaren-57925a</code> &middot; 2026-05-09 &middot; Pre-6 PM Codex HTTP-test handoff &middot; <b>v2 (post-rating amendment)</b></p>
 
   <div class="stat">
     <div class="item"><p class="num pass">66</p><div class="label">verifier PASS</div></div>
     <div class="item"><p class="num warn">0</p><div class="label">verifier WARN</div></div>
     <div class="item"><p class="num fail">0</p><div class="label">verifier FAIL</div></div>
-    <div class="item"><p class="num pass">85/85</p><div class="label">unit tests pass</div></div>
+    <div class="item"><p class="num pass">88/88</p><div class="label">unit tests pass</div></div>
     <div class="item"><p class="num info">0</p><div class="label">lint errors</div></div>
-    <div class="item"><p class="num info">3</p><div class="label">real holes plugged</div></div>
+    <div class="item"><p class="num info">7.7/10</p><div class="label">composite rating</div></div>
+  </div>
+
+  <div class="card" style="margin-top:16px; border-left: 3px solid var(--info);">
+    <h3 style="margin-top:0">v2 amendment summary</h3>
+    <p>This report was independently rated by 10 Sonnet evaluator agents (axes A1–A8; 7 falsifiable claims). The aggregate JSON is at
+    <code>_ultraplan/RATINGS_AGGREGATE_2026-05-09.json</code>. Composite <b>7.7/10, GO for 6 PM</b>. The amendment makes these honest corrections:</p>
+    <ul class="compact">
+      <li><b>Re-framed the rbac.js change.</b> Per <code>git show 89fc200</code>, this worktree's BEFORE state was already free of unconditional <code>x-user-role</code> header fallback (the worse pattern lives in the EHR root, UR-017 drift). The commit added the explicit dev-bypass gate and corrected precedence (JWT &gt; session). It is a hardening refactor + test guard, not a P0 regression closure in this worktree.</li>
+      <li><b>P0 caught and fixed: <code>JWT_SECRET</code> fallback</b> at <code>server/security/auth.js:24</code> would silently issue tokens that invalidate on every production restart. Now throws fatal at module load when <code>NODE_ENV=production</code> && <code>!JWT_SECRET</code>. Pinned by 3 new tests in <code>test/unit/jwt-secret-production-guard.test.js</code>.</li>
+      <li><b>Two stale README lines</b> (24 and 35) the initial sweep missed: now consistent at 13 modules.</li>
+      <li><b>Five 04-07 review items</b> (S-H5/H6/H7, F-H4, SV-M7) were not addressed by the initial commit. S-H5 is in fact protected (audit routes mount after global auth + admin/physician RBAC). S-H6, S-H7, F-H4, SV-M7 remain open and tracked.</li>
+    </ul>
   </div>
 </header>
 
@@ -128,15 +140,15 @@ inconsistencies. The verifier (built this session) now catches each of these aut
   <tbody>
     <tr>
       <td>1</td>
-      <td><b>S-C4 regression in <code>rbac.js</code></b> &mdash; <code>requireRole</code> defaulted to <code>'physician'</code> whenever <code>NODE_ENV !== 'production'</code>, and read <code>req.headers['x-user-role']</code> as an unconditional fallback. The 04-07 fix was applied to <code>auth.js</code> only.</td>
-      <td><code>server/security/rbac.js</code> lines 581&ndash;656</td>
-      <td><span class="pill fail">P0</span></td>
+      <td><b>RBAC identity precedence + dev-bypass gate</b> &mdash; the worktree's <code>getRequestIdentity</code> resolved with <code>req.session?.userRole || req.user?.role || 'guest'</code>, which inverted the JWT-vs-session priority and offered no controlled way for dev workflows to use header-based identity. (The <i>worse</i> "default-to-physician + unconditional header" pattern lived in the EHR root, not this worktree &mdash; UR-017 drift.) Refactored to JWT &gt; session &gt; dev-bypass-with-both-flags &gt; guest.</td>
+      <td><code>server/security/rbac.js</code> lines 573&ndash;604</td>
+      <td><span class="pill warn">P1 hardening</span></td>
       <td><span class="pill pass">Fixed</span></td>
     </tr>
     <tr>
       <td>2</td>
-      <td><b>Same regression in <code>hipaa-middleware.js</code></b> &mdash; <code>sessionTracker</code> and <code>rateLimiter</code> read <code>x-user-role</code> / <code>x-user-id</code> as fallbacks with no env gate.</td>
-      <td><code>server/security/hipaa-middleware.js</code> lines 452, 541</td>
+      <td><b>JWT_SECRET fallback allowed unsigned production deployment</b> &mdash; <code>const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64)...</code> generated an ephemeral key on each restart, invalidating all live tokens and silently logging every user out. Now throws fatal at module load when <code>NODE_ENV=production</code> && <code>!JWT_SECRET</code>.</td>
+      <td><code>server/security/auth.js:24</code></td>
       <td><span class="pill fail">P0</span></td>
       <td><span class="pill pass">Fixed</span></td>
     </tr>
@@ -156,24 +168,38 @@ inconsistencies. The verifier (built this session) now catches each of these aut
     </tr>
     <tr>
       <td>5</td>
-      <td><b>Stale "9-module" / "nine specialized" language</b> across <code>README.md</code>, <code>VISION.md</code>, <code>package.json</code>.</td>
-      <td>4 docs</td>
+      <td><b>Stale "9-module" / "nine specialized" language</b> across docs. Initial sweep fixed <code>VISION.md</code>, <code>package.json</code>, <code>README.md:410</code>, <code>MODULE_CATALOG.md</code>. Amendment also fixed <code>README.md:24</code> ("10 specialized AI agents") and <code>README.md:35</code> ("nine explicit workflow modules") that the initial sweep missed.</td>
+      <td>5 docs, 6 lines</td>
       <td><span class="pill warn">P2</span></td>
       <td><span class="pill pass">Updated</span></td>
     </tr>
     <tr>
       <td>6</td>
-      <td><b>No auth unit tests.</b> <code>test/unit/</code> had RBAC, PHI-encryption, and audit tests but no test pinning the JWT-non-export contract or the dev-bypass gate.</td>
-      <td><code>test/unit/auth-identity.test.js</code></td>
+      <td><b>No auth unit tests.</b> <code>test/unit/</code> had RBAC, PHI-encryption, and audit tests but no test pinning the JWT-non-export contract, the dev-bypass gate, or the production startup guard.</td>
+      <td><code>test/unit/auth-identity.test.js</code> (8 tests) + <code>test/unit/jwt-secret-production-guard.test.js</code> (3 tests, amendment)</td>
       <td><span class="pill warn">P1</span></td>
-      <td><span class="pill pass">8 tests added</span></td>
+      <td><span class="pill pass">11 tests added</span></td>
     </tr>
     <tr>
       <td>7</td>
-      <td><b>UR-017: worktree drift.</b> Branch is at 13 modules; the EHR root has 14 with AWV uncommitted. This is a known-pending item for the AWV merge from main.</td>
-      <td>worktree state</td>
+      <td><b>UR-017: worktree drift.</b> Branch is at 13 modules; the EHR root has 14 with AWV uncommitted. The worse rbac/hipaa fallback patterns I described in v1 were in the EHR root file, not the worktree. Amendment §2 row 1 is honest about that.</td>
+      <td>worktree vs EHR root</td>
       <td><span class="pill info">tracked</span></td>
-      <td><span class="pill warn">Open &mdash; needs AWV merge</span></td>
+      <td><span class="pill warn">Open &mdash; needs AWV merge + EHR-root reconcile</span></td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td><b>S-H5 audit CSV export</b> claimed-fixed by 04-07 but not verified by initial session. <i>Investigation:</i> <code>server.js:1865</code> registers <code>GET /api/audit/export</code>; mounted after both <code>app.use('/api', auth.requireAuth)</code> at line 252 and <code>app.use('/api/audit', rbac.requireRole('admin', 'physician'))</code> at line 259. <b>Structurally protected.</b></td>
+      <td><code>server/server.js:259, 1865</code></td>
+      <td><span class="pill warn">P1 (was)</span></td>
+      <td><span class="pill pass">Already fixed (verified)</span></td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td><b>S-H6 audit log integrity, S-H7 audit-identity-from-body, F-H4 console.error PHI, SV-M7 calculateAge import</b> &mdash; flagged HIGH/MEDIUM in 04-07 review and not addressed by either initial commit or this amendment. Tracked for follow-up; not blocking 6 PM.</td>
+      <td>multiple files</td>
+      <td><span class="pill warn">P1/P2</span></td>
+      <td><span class="pill warn">Open &mdash; tracked</span></td>
     </tr>
   </tbody>
 </table>

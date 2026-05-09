@@ -21,6 +21,19 @@ const { createUsersTable } = require('../database-migrations');
 // CONFIGURATION
 // ==========================================
 
+// Production must have an explicit JWT_SECRET. The ephemeral random fallback
+// is allowed only outside production so dev / test workflows don't need to
+// hand-set a secret. In production, missing JWT_SECRET = fatal startup error.
+if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production') {
+  // Throw at module load so a misconfigured production deployment fails fast
+  // instead of silently issuing tokens that invalidate on every restart and
+  // log every user out simultaneously.
+  throw new Error(
+    '[AUTH] FATAL: JWT_SECRET environment variable is required when NODE_ENV=production. ' +
+    'Refusing to start with an ephemeral key — token signatures would not survive a restart.'
+  );
+}
+
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '8h';
 const BCRYPT_ROUNDS = 12;
@@ -32,7 +45,7 @@ const PASSWORD_REGEX_LOWER = /[a-z]/;
 const PASSWORD_REGEX_DIGIT = /[0-9]/;
 const PASSWORD_REGEX_SPECIAL = /[^A-Za-z0-9]/;
 
-// Warn if using a generated secret (won't survive restarts)
+// Warn if using a generated secret outside production (won't survive restarts)
 if (!process.env.JWT_SECRET) {
   console.warn('[AUTH] WARNING: JWT_SECRET not set — using ephemeral key. Sessions will not survive server restarts.');
   console.warn('[AUTH] Set JWT_SECRET in your environment for persistent authentication.');
